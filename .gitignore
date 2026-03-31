@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# ML artifacts
+step_4/artifacts/*.pkl
+step_4/artifacts/*.joblib
+step_5/artifacts/*.pkl
+step_5/artifacts/*.joblib
+
+# Plots (generated, not tracked)
+step_1/plots/*.png
+step_1/plots/*.pdf
+
+# Data (large, stored on GCS)
+data/
+air_quality_data/
+*.json
+*.csv
+*.parquet
+
+# Secrets & env
+.env
+*.env
+service_account*.json
+credentials*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
