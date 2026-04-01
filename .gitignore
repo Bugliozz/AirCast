@@ -18,14 +18,13 @@ env/
 *.ipynb
 
 # ML artifacts
-step_4/artifacts/*.pkl
-step_4/artifacts/*.joblib
-step_5/artifacts/*.pkl
-step_5/artifacts/*.joblib
+step_4_regression/artifacts/*.pkl
+step_4_regression/artifacts/*.joblib
+step_5_classification/artifacts/*.pkl
+step_5_classification/artifacts/*.joblib
 
 # Plots (generated, not tracked)
-step_1/plots/*.png
-step_1/plots/*.pdf
+step_3_eda/plots/
 
 # Data (large, stored on GCS)
 data/

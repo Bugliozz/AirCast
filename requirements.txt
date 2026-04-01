@@ -5,3 +5,9 @@ requests>=2.31
 pymysql>=1.1
 neo4j>=5.0
 opensearch-py>=2.0
+
+# step_3_eda
+matplotlib>=3.8
+seaborn>=0.13
+scipy>=1.11
+pyarrow>=14.0
