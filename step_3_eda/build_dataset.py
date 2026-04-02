@@ -42,23 +42,38 @@ def _pivot_pollutants(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    # Normalise sensor names for column naming
+    # Map full ARPA Italian sensor names → short codes used as column prefixes
+    _TIPO_MAP: dict[str, str] = {
+        "biossido di azoto":   "no2",
+        "ozono":               "o3",
+        "monossido di carbonio": "co",
+        "particolato (pm2,5)": "pm25",  # Italian decimal comma variant
+        "particolato (pm2.5)": "pm25",
+        "particolato (pm25)":  "pm25",  # after dot-removal fallback
+    }
+
     df = df.assign(
-        tipo=df["tiposensore"].str.lower().str.replace(".", "", regex=False),
+        tipo=df["tiposensore"]
+            .str.lower()
+            .str.strip()
+            .map(_TIPO_MAP)
     )
+    df = df.dropna(subset=["tipo"])
+    if df.empty:
+        return pd.DataFrame()
 
     mean_pivot = df.pivot_table(
         index=["idstazione", "data_giorno"],
         columns="tipo",
         values="valore_mean",
-        aggfunc="first",
+        aggfunc="mean",
     ).rename(columns=lambda c: f"{c}_mean")
 
     max_pivot = df.pivot_table(
         index=["idstazione", "data_giorno"],
         columns="tipo",
         values="valore_max",
-        aggfunc="first",
+        aggfunc="max",
     ).rename(columns=lambda c: f"{c}_max")
 
     wide = mean_pivot.join(max_pivot).reset_index()
@@ -171,6 +186,9 @@ def apply_missing_strategy(df: pd.DataFrame) -> pd.DataFrame:
         median_val = df[col].median()
         df[col] = df[col].fillna(median_val)
 
+    # Ricalcolo delle feature derivate in base ai nuovi valori imputati
+    df = _add_stagnation_flag(df)
+
     log.info("Missing-value strategy: %d → %d rows.", n_before, len(df))
     return df
 
@@ -196,6 +214,15 @@ def build_daily_dataset(conn: pymysql.Connection) -> pd.DataFrame:
 
     if not pollutants.empty:
         df = df.merge(pollutants, on=["idstazione", "data_giorno"], how="left")
+
+    # ── Industrial proximity (static per-station feature) ────────────────
+    industrial_path = Path(__file__).parent.parent / "data" / "raw" / "industrial_proximity.parquet"
+    if industrial_path.exists():
+        industrial = pd.read_parquet(industrial_path)
+        df = df.merge(industrial, on="idstazione", how="left")
+        log.info("Merged industrial proximity features.")
+    else:
+        log.warning("No industrial_proximity.parquet found — feature skipped.")
 
     log.info("Joined dataset: %d rows, %d columns.", *df.shape)
 

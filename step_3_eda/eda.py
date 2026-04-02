@@ -32,13 +32,14 @@ from step_3_eda.db import connect_mysql, load_no2_hourly
 from step_3_eda.plots import (
     plot_class_distribution,
     plot_correlation_heatmap,
+    plot_industrial_vs_pm10,
     plot_missing_values,
     plot_no2_hourly_profile,
     plot_pm10_by_provincia,
     plot_pm10_by_season,
     plot_pm10_by_weekday,
-    plot_pm10_by_zona,
     plot_pm10_distribution,
+    plot_pm10_monthly,
     plot_pm10_timeseries,
     plot_stagnation_vs_pm10,
     plot_weather_vs_pm10,
@@ -104,10 +105,11 @@ def main() -> None:
         plot_pm10_timeseries(df, PLOTS_DIR)
         plot_pm10_by_season(df, PLOTS_DIR)
         plot_pm10_by_weekday(df, PLOTS_DIR)
-        plot_pm10_by_zona(df, PLOTS_DIR)
+        plot_pm10_monthly(df, PLOTS_DIR)
         plot_pm10_by_provincia(df, PLOTS_DIR)
         plot_weather_vs_pm10(df, PLOTS_DIR)
         plot_stagnation_vs_pm10(df, PLOTS_DIR)
+        plot_industrial_vs_pm10(df, PLOTS_DIR)
 
         # NO2 hourly profile (separate query, hourly granularity)
         no2_h = load_no2_hourly(conn)

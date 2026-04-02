@@ -3,7 +3,8 @@ requests>=2.31
 
 # step_2_ingestion
 pymysql>=1.1
-neo4j>=5.0
+geopandas>=0.14
+shapely>=2.0
 opensearch-py>=2.0
 
 # step_3_eda

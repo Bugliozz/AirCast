@@ -1,4 +1,4 @@
-"""Step 2 — ETL: load raw JSON files into MySQL and Neo4j.
+"""Step 2 — ETL: load raw JSON files into MySQL + compute spatial features.
 
 Usage
 -----
@@ -7,7 +7,7 @@ Usage
 #   (wait ~30 s for MySQL to be ready)
 
 # Then run from project root:
-python step_2_ingestion/ingest.py
+python -m step_2_ingestion.ingest
 
 # Or override defaults with env vars:
 MYSQL_HOST=localhost MYSQL_PASSWORD=airpass python step_2_ingestion/ingest.py
@@ -26,7 +26,6 @@ from typing import Any
 import pandas as pd
 import pymysql
 import requests
-from neo4j import GraphDatabase
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config  (all overridable via environment variables)
@@ -37,10 +36,6 @@ MYSQL_PORT     = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DB       = os.getenv("MYSQL_DB",       "airquality")
 MYSQL_USER     = os.getenv("MYSQL_USER",     "airuser")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "airpass")
-
-NEO4J_URI      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
-NEO4J_USER     = os.getenv("NEO4J_USER",     "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neo4jpass")
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
 
@@ -145,35 +140,34 @@ def _safe(df: pd.DataFrame, col: str) -> pd.Series:
     return df[col] if col in df.columns else pd.Series([None] * len(df), index=df.index)
 
 
+def _convert_nan_to_none(row: tuple) -> tuple:
+    """Convert numpy NaN/pandas NA values to None for MySQL compatibility."""
+    return tuple(None if pd.isna(v) else v for v in row)
+
+
 def upsert_stations(conn: pymysql.Connection, sensors_df: pd.DataFrame) -> int:
     """Upsert one row per unique station into `stations`."""
-    cols = ["idstazione", "nomestazione", "provincia", "comune", "zona", "quota", "lat", "lng"]
-    station_cols = [c for c in cols if c in sensors_df.columns or c in ("idstazione",)]
-
     stations = (
         sensors_df[["idstazione"]]
         .assign(
             nomestazione = _safe(sensors_df, "nomestazione"),
             provincia    = _safe(sensors_df, "provincia"),
             comune       = _safe(sensors_df, "comune"),
-            zona         = _safe(sensors_df, "zona"),
             quota        = pd.to_numeric(_safe(sensors_df, "quota"), errors="coerce"),
             lat          = pd.to_numeric(_safe(sensors_df, "lat"),   errors="coerce"),
             lng          = pd.to_numeric(_safe(sensors_df, "lng"),   errors="coerce"),
         )
         .drop_duplicates(subset="idstazione")
-        .where(pd.notna, None)
     )
 
-    rows = [tuple(row) for row in stations.itertuples(index=False, name=None)]
+    rows = [_convert_nan_to_none(tuple(row)) for row in stations.itertuples(index=False, name=None)]
     sql = """
-        INSERT INTO stations (idstazione, nomestazione, provincia, comune, zona, quota, lat, lng)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO stations (idstazione, nomestazione, provincia, comune, quota, lat, lng)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             nomestazione = VALUES(nomestazione),
             provincia    = VALUES(provincia),
             comune       = VALUES(comune),
-            zona         = VALUES(zona),
             quota        = VALUES(quota),
             lat          = VALUES(lat),
             lng          = VALUES(lng)
@@ -190,15 +184,15 @@ def upsert_sensors(conn: pymysql.Connection, sensors_df: pd.DataFrame) -> int:
     sensors = sensors_df.assign(
         datastart = pd.to_datetime(_safe(sensors_df, "datastart"), errors="coerce").dt.date,
         datastop  = pd.to_datetime(_safe(sensors_df, "datastop"),  errors="coerce").dt.date,
-    )[["idsensore", "idstazione", "tiposensore", "unitamisura", "datastart", "datastop"]] \
-     .where(pd.notna, None)
+        tiposensore = _safe(sensors_df, "nometiposensore"),  # Rename: nometiposensore → tiposensore
+    )[["idsensore", "idstazione", "tiposensore", "unitamisura", "datastart", "datastop"]]
 
-    # Rename columns that might be missing
+    # Ensure all required columns exist
     for col in ["idstazione", "tiposensore", "unitamisura", "datastart", "datastop"]:
         if col not in sensors.columns:
             sensors[col] = None
 
-    rows = [tuple(row) for row in sensors.itertuples(index=False, name=None)]
+    rows = [_convert_nan_to_none(tuple(row)) for row in sensors.itertuples(index=False, name=None)]
     sql = """
         INSERT INTO sensors (idsensore, idstazione, tiposensore, unitamisura, datastart, datastop)
         VALUES (%s, %s, %s, %s, %s, %s)
@@ -312,98 +306,6 @@ def ingest_weather(conn: pymysql.Connection) -> int:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Neo4j graph
-# ──────────────────────────────────────────────────────────────────────────────
-
-def build_neo4j_graph(sensors_df: pd.DataFrame) -> None:
-    """Create Station, Province, and Zone nodes with relationships."""
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-
-    stations = (
-        sensors_df[["idstazione"]]
-        .assign(
-            nomestazione = _safe(sensors_df, "nomestazione"),
-            provincia    = _safe(sensors_df, "provincia"),
-            zona         = _safe(sensors_df, "zona"),
-            quota        = pd.to_numeric(_safe(sensors_df, "quota"),   errors="coerce"),
-            lat          = pd.to_numeric(_safe(sensors_df, "lat"),     errors="coerce"),
-            lng          = pd.to_numeric(_safe(sensors_df, "lng"),     errors="coerce"),
-        )
-        .drop_duplicates(subset="idstazione")
-        .where(pd.notna, None)
-        .to_dict("records")
-    )
-
-    with driver.session() as session:
-        # Constraints (idempotent)
-        session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (s:Station)  REQUIRE s.id IS UNIQUE")
-        session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (p:Province) REQUIRE p.name IS UNIQUE")
-        session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (z:Zone)     REQUIRE z.type IS UNIQUE")
-
-        # Stations
-        session.run(
-            """
-            UNWIND $rows AS r
-            MERGE (s:Station {id: r.idstazione})
-            SET   s.name     = r.nomestazione,
-                  s.lat      = r.lat,
-                  s.lng      = r.lng,
-                  s.quota    = r.quota
-            """,
-            rows=stations,
-        )
-        log.info("Neo4j: upserted %d Station nodes.", len(stations))
-
-        # Provinces + LOCATED_IN relationships
-        session.run(
-            """
-            UNWIND $rows AS r
-            WHERE r.provincia IS NOT NULL
-            MERGE (p:Province {name: r.provincia})
-            WITH p, r
-            MATCH (s:Station {id: r.idstazione})
-            MERGE (s)-[:LOCATED_IN]->(p)
-            """,
-            rows=stations,
-        )
-        log.info("Neo4j: upserted Province nodes and LOCATED_IN edges.")
-
-        # Zones + ZONE_TYPE relationships
-        session.run(
-            """
-            UNWIND $rows AS r
-            WHERE r.zona IS NOT NULL
-            MERGE (z:Zone {type: r.zona})
-            WITH z, r
-            MATCH (s:Station {id: r.idstazione})
-            MERGE (s)-[:ZONE_TYPE]->(z)
-            """,
-            rows=stations,
-        )
-        log.info("Neo4j: upserted Zone nodes and ZONE_TYPE edges.")
-
-        # Industrial spatial influence relationships
-        # Creates an edge: (Industriale)-[:INFLUENZA_SU {distanza_km}]->(Station) if distance <= 15 km
-        result = session.run(
-            """
-            MATCH (s1:Station)
-            MATCH (s2:Station {zona: 'Industriale'})
-            WHERE s1.id <> s2.id AND s1.lat IS NOT NULL AND s2.lat IS NOT NULL
-            WITH s1, s2, point.distance(point({latitude: s1.lat, longitude: s1.lng}), point({latitude: s2.lat, longitude: s2.lng})) / 1000.0 AS dist_km
-            WHERE dist_km <= 15.0
-            MERGE (s2)-[r:INFLUENZA_SU]->(s1)
-            SET r.distanza_km = round(dist_km * 10) / 10.0
-            RETURN count(r) as influenze
-            """
-        )
-        record = result.single()
-        influenze_count = record["influenze"] if record else 0
-        log.info("Neo4j: created %d INFLUENZA_SU spatial edges from Industrial zones.", influenze_count)
-
-    driver.close()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Orchestration
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -424,14 +326,28 @@ def main() -> None:
         upsert_sensors(conn, sensors_df)
         ingest_measurements(conn)
         ingest_weather(conn)
+
+        # ── 3. Industrial proximity (spatial features) ───────────────────
+        geojson_path = RAW_DIR / "industrial_zones.geojson"
+        if geojson_path.exists():
+            try:
+                from .spatial import (
+                    compute_industrial_proximity,
+                    load_industrial_zones,
+                    load_stations_geodf,
+                )
+
+                stations_gdf = load_stations_geodf(conn)
+                zones_gdf = load_industrial_zones(geojson_path)
+                industrial_df = compute_industrial_proximity(stations_gdf, zones_gdf)
+                industrial_df.to_parquet(RAW_DIR / "industrial_proximity.parquet", index=False)
+                log.info("Industrial proximity: %d stations computed.", len(industrial_df))
+            except Exception as exc:
+                log.warning("Industrial proximity computation skipped: %s", exc)
+        else:
+            log.warning("No industrial_zones.geojson found — run fetch_industrial_zones.py first.")
     finally:
         conn.close()
-
-    # ── 3. Neo4j ─────────────────────────────────────────────────────────────
-    try:
-        build_neo4j_graph(sensors_df)
-    except Exception as exc:
-        log.warning("Neo4j ingestion skipped: %s", exc)
 
     log.info("=== Step 2: Ingestion complete ===")
 

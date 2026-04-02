@@ -47,7 +47,7 @@ def station_coverage_report(df: pd.DataFrame) -> pd.DataFrame:
     """Per-station coverage: how many days have PM10 data vs total date range."""
     total_days = df["data_giorno"].nunique()
     coverage = (
-        df.groupby(["idstazione", "nomestazione", "provincia", "zona"])["data_giorno"]
+        df.groupby(["idstazione", "nomestazione", "provincia"])["data_giorno"]
           .nunique()
           .reset_index()
           .rename(columns={"data_giorno": "days_with_data"})

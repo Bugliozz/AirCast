@@ -206,17 +206,36 @@ def plot_pm10_by_weekday(df: pd.DataFrame, out: Path) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 08 — PM10 by zone type
+# 08 — PM10 monthly mean
 # ──────────────────────────────────────────────────────────────────────────────
 
-def plot_pm10_by_zona(df: pd.DataFrame, out: Path) -> None:
-    """Boxplot PM10 by station zone type."""
-    fig, ax = plt.subplots(figsize=(8, 5))
-    sns.boxplot(data=df, x="zona", y="pm10", ax=ax, palette="Set2")
-    ax.set_title("PM10 per tipologia zona")
-    ax.set_xlabel("Zona")
+_MONTH_LABELS = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
+                 "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+
+
+def plot_pm10_monthly(df: pd.DataFrame, out: Path) -> None:
+    """Bar chart of mean ± std PM10 by calendar month."""
+    monthly = (
+        df.groupby("mese")["pm10"]
+          .agg(["mean", "std"])
+          .reset_index()
+    )
+    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
+    colors = sns.color_palette("coolwarm", 12)
+    ax.bar(
+        monthly["mese"], monthly["mean"],
+        yerr=monthly["std"], capsize=4,
+        color=[colors[int(m) - 1] for m in monthly["mese"]],
+        edgecolor="white",
+    )
+    ax.axhline(50, ls="--", lw=1.2, color="red", label="Soglia OMS 50 µg/m³")
+    ax.set_xticks(range(1, 13))
+    ax.set_xticklabels(_MONTH_LABELS)
+    ax.set_title("PM10 medio per mese (± std)")
+    ax.set_xlabel("Mese")
     ax.set_ylabel("PM10 (µg/m³)")
-    _savefig(fig, out / "08_pm10_by_zona.png")
+    ax.legend(fontsize=9)
+    _savefig(fig, out / "08_pm10_monthly.png")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -281,35 +300,7 @@ def plot_weather_vs_pm10(df: pd.DataFrame, out: Path) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 11 — NO2 hourly profile
-# ──────────────────────────────────────────────────────────────────────────────
-
-def plot_no2_hourly_profile(no2_hourly: pd.DataFrame, out: Path) -> None:
-    """Mean hourly NO2 profile: weekday vs weekend."""
-    if no2_hourly.empty:
-        return
-
-    df = no2_hourly.assign(
-        ora=no2_hourly["dt"].dt.hour,
-        is_weekend=no2_hourly["dt"].dt.dayofweek.isin([5, 6]),
-        tipo=no2_hourly["dt"].dt.dayofweek.isin([5, 6]).map(
-            {True: "Weekend", False: "Feriale"}
-        ),
-    )
-    profile = df.groupby(["ora", "tipo"])["no2"].mean().reset_index()
-
-    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
-    sns.lineplot(data=profile, x="ora", y="no2", hue="tipo", ax=ax, marker="o", markersize=5)
-    ax.set_title("Profilo orario NO2 — Feriale vs Weekend")
-    ax.set_xlabel("Ora del giorno")
-    ax.set_ylabel("NO2 medio (µg/m³)")
-    ax.set_xticks(range(24))
-    ax.legend(title="")
-    _savefig(fig, out / "11_no2_hourly_profile.png")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 12 — Stagnation vs PM10
+# 11 — Stagnation vs PM10
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_stagnation_vs_pm10(df: pd.DataFrame, out: Path) -> None:
@@ -320,10 +311,82 @@ def plot_stagnation_vs_pm10(df: pd.DataFrame, out: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 5))
     sns.boxplot(
         data=df, x="stagnation_flag", y="pm10", ax=ax,
-        palette={True: "#e53935", False: "#43a047"},
+        hue="stagnation_flag", palette={True: "#e53935", False: "#43a047"},
+        legend=False,
     )
     ax.set_xticklabels(["No stagnazione", "Stagnazione"])
     ax.set_title("PM10 in condizioni di stagnazione atmosferica")
     ax.set_xlabel("")
     ax.set_ylabel("PM10 (µg/m³)")
-    _savefig(fig, out / "12_stagnation_vs_pm10.png")
+    _savefig(fig, out / "11_stagnation_vs_pm10.png")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 12 — Industrial proximity vs PM10
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_industrial_vs_pm10(df: pd.DataFrame, out: Path) -> None:
+    """Scatter plots of industrial proximity features vs PM10."""
+    vars_present = [
+        ("dist_industrial_km", "Distanza zona industriale (km)"),
+        ("n_industrial_zones_15km", "N. zone industriali entro 15 km"),
+    ]
+    available = [(col, label) for col, label in vars_present if col in df.columns]
+    if not available:
+        log.warning("Industrial proximity columns not found — skipping plot 12.")
+        return
+
+    fig, axes = plt.subplots(1, len(available), figsize=(8 * len(available), 5))
+    if len(available) == 1:
+        axes = [axes]
+
+    for ax, (col, label) in zip(axes, available):
+        sns.regplot(
+            data=df, x=col, y="pm10", ax=ax,
+            scatter_kws={"alpha": 0.15, "s": 8},
+            line_kws={"color": "red", "lw": 1.2},
+        )
+        r = df[[col, "pm10"]].corr().iloc[0, 1]
+        ax.set_title(f"{label}\nr = {r:.3f}", fontsize=10)
+        ax.set_xlabel(label)
+        ax.set_ylabel("PM10 (µg/m³)")
+
+    fig.suptitle("Prossimità industriale vs PM10", fontsize=13)
+    fig.tight_layout()
+    _savefig(fig, out / "12_industrial_vs_pm10.png")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 13 — NO2 hourly profile
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_no2_hourly_profile(no2_hourly: pd.DataFrame, out: Path) -> None:
+    """Mean hourly NO2 profile: weekday vs weekend."""
+    if no2_hourly.empty:
+        log.warning("NO2 hourly DataFrame is empty — skipping plot 13.")
+        return
+
+    if "dt" not in no2_hourly.columns or "no2" not in no2_hourly.columns:
+        log.warning("NO2 hourly missing required columns. Got: %s", no2_hourly.columns.tolist())
+        return
+
+    df = no2_hourly.assign(
+        ora=no2_hourly["dt"].dt.hour,
+        tipo=no2_hourly["dt"].dt.dayofweek.isin([5, 6]).map(
+            {True: "Weekend", False: "Feriale"}
+        ),
+    )
+    profile = df.groupby(["ora", "tipo"])["no2"].mean().reset_index()
+
+    log.info(f"NO2 hourly profile: {len(profile)} aggregated rows, unique hours: {profile['ora'].nunique()}, types: {profile['tipo'].unique().tolist()}")
+    if len(profile) < 10:
+        log.warning("Plot 13: Profile has only %d rows — may appear as scatter instead of line", len(profile))
+
+    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
+    sns.lineplot(data=profile, x="ora", y="no2", hue="tipo", ax=ax, marker="o", markersize=5)
+    ax.set_title("Profilo orario NO2 — Feriale vs Weekend")
+    ax.set_xlabel("Ora del giorno")
+    ax.set_ylabel("NO2 medio (µg/m³)")
+    ax.set_xticks(range(24))
+    ax.legend(title="")
+    _savefig(fig, out / "13_no2_hourly_profile.png")

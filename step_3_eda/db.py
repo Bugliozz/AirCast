@@ -75,23 +75,22 @@ def load_pm10_daily(conn: pymysql.Connection) -> pd.DataFrame:
     """Load daily PM10 values joined with station metadata."""
     sql = """
         SELECT
-            m.idsensore,
             s.idstazione,
             st.nomestazione,
             st.provincia,
             st.comune,
-            st.zona,
             st.quota,
             st.lat,
             st.lng,
             DATE(m.data)  AS data_giorno,
-            m.valore      AS pm10
+            AVG(m.valore) AS pm10
         FROM measurements m
         JOIN sensors  s  ON m.idsensore  = s.idsensore
         JOIN stations st ON s.idstazione = st.idstazione
-        WHERE s.tiposensore = 'PM10'
+        WHERE s.tiposensore LIKE '%PM10%'
           AND m.valore IS NOT NULL
-        ORDER BY s.idstazione, m.data
+        GROUP BY s.idstazione, st.nomestazione, st.provincia, st.comune, st.quota, st.lat, st.lng, DATE(m.data)
+        ORDER BY s.idstazione, data_giorno
     """
     df = pd.read_sql(sql, conn, parse_dates=["data_giorno"])
     log.info("PM10 daily: %d rows, %d stations.", len(df), df["idstazione"].nunique())
@@ -140,7 +139,10 @@ def load_pollutants_daily_agg(conn: pymysql.Connection) -> pd.DataFrame:
             MAX(m.valore) AS valore_max
         FROM measurements m
         JOIN sensors s ON m.idsensore = s.idsensore
-        WHERE s.tiposensore IN ('NO2', 'O3', 'CO', 'PM2.5')
+        WHERE (   s.tiposensore LIKE '%Azoto%'
+               OR s.tiposensore LIKE '%Ozono%'
+               OR s.tiposensore LIKE '%Carbonio%'
+               OR s.tiposensore LIKE '%PM2%')
           AND m.valore IS NOT NULL
         GROUP BY s.idstazione, s.tiposensore, DATE(m.data)
         ORDER BY s.idstazione, data_giorno
@@ -159,7 +161,7 @@ def load_no2_hourly(conn: pymysql.Connection) -> pd.DataFrame:
             m.valore    AS no2
         FROM measurements m
         JOIN sensors s ON m.idsensore = s.idsensore
-        WHERE s.tiposensore = 'NO2'
+        WHERE s.tiposensore LIKE '%Azoto%'
           AND m.valore IS NOT NULL
         ORDER BY s.idstazione, m.data
     """

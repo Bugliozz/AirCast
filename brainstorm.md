@@ -30,7 +30,7 @@ Il progetto segue un flusso lineare e locale, orchestrato tramite script Python 
 │ STEP 2: Storage & Ingestione (ETL)                               │
 │  ├─ Docker Compose locale per i database                         │
 │  ├─ MySQL: Tabelle strutturate (misure, stazioni, meteo)         │
-│  └─ Neo4j: Grafo spaziale (relazioni dinamiche basate su lat/lng)│
+│  └─ GeoPandas/Shapely: Distanza stazioni-zone industriali (OSM)  │
 └──────────────────────────────────────────────────────────────────┘
                                  ↓
 ┌──────────────────────────────────────────────────────────────────┐
@@ -80,7 +80,7 @@ exam_project/
 │   └── backfill.py            # Loop per scaricare lo storico (es. 1 anno)
 │
 ├── step_2_ingestion/          # Ex Step 2 (Database ETL)
-│   ├── compose.yaml           # MySQL + Metabase + Neo4j
+│   ├── compose.yaml           # MySQL + Metabase
 │   ├── schema.sql             # Init MySQL
 │   └── ingest.py              # Legge da data/raw/ e popola i DB
 │
@@ -151,7 +151,7 @@ exam_project/
 - **Giorno della settimana** — domenica = traffico minimo, festivo / pre-festivo
 - **Provincia / zona** — urbana, suburbana, rurale, industriale
 - **Quota (m slm)**
-- **Feature Derivata (da Neo4j):** Impatto industriale (Distanza < 15km da zone industriali) calcolata via grafo spaziale.
+- **Feature Derivata (da GeoPandas):** Distanza dalla zona industriale OSM più vicina (`dist_industrial_km`) e conteggio zone entro 15km (`n_industrial_zones_15km`), calcolate via spatial join con proiezione UTM 32N.
 
 ### Derivate da Variabili Meteo
 
@@ -204,10 +204,11 @@ exam_project/
 
 ## 🌐 Utilizzo Database Avanzati
 
-### Neo4j (Database a Grafo)
+### GeoPandas + OpenStreetMap (Feature Spaziali)
 
-Sfruttato per creare **feature spaziali senza l'uso di pesanti file GIS**. Durante l'ETL, una query Cypher utilizza `point.distance()` sulle coordinate (lat/lng) per trovare tutte le stazioni nel raggio di 15km da una zona `Industriale`. 
-Viene creato dinamicamente l'arco `(Station_Ind)-[:INFLUENZA_SU {distanza_km}]->(Station)`, rendendo istantaneo il calcolo dell'esposizione all'inquinamento limitrofo.
+I poligoni `landuse=industrial` vengono scaricati da OpenStreetMap (Overpass API) per l'intera Lombardia e salvati in GeoJSON (`data/raw/industrial_zones.geojson`).
+GeoPandas e Shapely calcolano, per ogni stazione ARPA, la distanza dal bordo della zona industriale più vicina (`dist_industrial_km`) e il numero di zone entro 15km (`n_industrial_zones_15km`).
+La proiezione EPSG:32632 (UTM 32N) garantisce distanze metriche accurate. Il risultato viene salvato in `data/raw/industrial_proximity.parquet` e unito al dataset giornaliero nello Step 3.
 
 ---
 

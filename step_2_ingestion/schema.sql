@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS stations (
     nomestazione  VARCHAR(150),
     provincia     VARCHAR(50),
     comune        VARCHAR(100),
-    zona          VARCHAR(50),   -- urbana / suburbana / rurale / industriale
     quota         SMALLINT,      -- metres above sea level
     lat           DECIMAL(10,7),
     lng           DECIMAL(10,7),
