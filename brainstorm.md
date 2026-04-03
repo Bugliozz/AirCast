@@ -163,9 +163,42 @@ exam_project/
 ### Missing Values
 
 - **Eliminazione:** colonne/stazioni con >50% missing
-- **Imputazione Serie Temporali:** forward fill → backward fill per gli inquinanti
-- **Imputazione Meteo:** Mediana globale
+- **Imputazione Serie Temporali:** Solo `forward fill` (`ffill`) per inquinanti e feature derivate (lag, rolling).
+  - **Nota di Progettazione:** L'uso di `backward fill` (`bfill`) è stato evitato deliberatamente. Sebbene riempirebbe i `NaN` a inizio serie, introdurrebbe **data leakage**, "guardando nel futuro" per riempire un dato mancante. Questo doperebbe le performance del modello in validazione ma lo renderebbe inaffidabile in produzione.
+- **Imputazione Meteo:** Mediana, ma **calcolata esclusivamente sul training set** (vedi sezione Anti-Leakage sotto).
 - **Target:** Eliminazione righe in caso di target mancante (nessuna imputazione)
+
+### Anti-Leakage: Pipeline in Due Fasi
+
+La pipeline di preprocessing è stata progettata in due fasi per prevenire il data leakage:
+
+**Fase 1 — `clean_dataset()` (sicura, pre-split):**
+Operazioni che non usano statistiche globali e possono essere eseguite sull'intero dataset prima del train/test split:
+- Drop colonne con >50% missing
+- Drop stazioni con scarsa copertura PM10
+- Forward-fill per stazione (usa solo dati passati)
+- Drop righe con target mancante
+- Output: `daily_dataset_clean.parquet` (può contenere NaN residui)
+
+**Fase 2 — `impute_missing()` (da eseguire DOPO lo split):**
+Imputazione basata sulla mediana con pattern fit/transform:
+```python
+# Nel training
+train_imputed, medians = impute_missing(train_df)
+# Nel test — usa le mediane del training
+test_imputed, _ = impute_missing(test_df, medians=medians)
+```
+
+**Problemi di leakage risolti:**
+1. **Stagnation flag:** Usava `df.median()` sull'intero dataset per determinare "alta pressione" e "vento debole". Sostituito con soglie meteorologiche fisse: pressione > 1013.25 hPa, vento < 1.5 m/s, BLH < 500 m.
+2. **Imputazione mediana globale:** I NaN residui (dopo ffill) venivano riempiti con `df[col].median()` calcolata sull'intero dataset, includendo il test set. Ora la mediana è calcolata solo sul training set e applicata al test set tramite `impute_missing()`.
+
+**Operazioni verificate come sicure (nessun leakage):**
+- `shift(1)`, `shift(2)` — lag, usa solo dati passati
+- `rolling(3, min_periods=1).mean()` — finestra [t-2, t-1, t], il meteo corrente è disponibile da forecast
+- `ffill` per stazione — propaga solo valori passati
+- Soglie allerta PM10 — costanti fisse da direttiva EU
+- Feature temporali (mese, stagione, giorno settimana) — deterministiche dalla data
 
 ### Target
 
@@ -217,7 +250,7 @@ La proiezione EPSG:32632 (UTM 32N) garantisce distanze metriche accurate. Il ris
 - [x] Brainstorming e riorganizzazione della pipeline locale
 - [x] step_1_collection: Scrivere backfill.py per scaricare almeno 1 anno di storico in data/raw/
 - [x] step_2_ingestion: Preparare compose.yaml (MySQL, Metabase, Neo4j) e lo script di caricamento ETL
-- [ ] step_3_eda: Eseguire script per missing values, class distribution e correlazioni
+- [x] step_3_eda: Eseguire script per missing values, class distribution e correlazioni
 - [ ] step_4_regression: Addestrare modelli, fare tuning, salvare pipeline
 - [ ] step_5_classification: Addestrare classificatore 4 classi testando SMOTE
 - [ ] api: Sviluppare app Flask per esporre i modelli addestrati

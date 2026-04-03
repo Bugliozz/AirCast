@@ -308,9 +308,13 @@ def plot_stagnation_vs_pm10(df: pd.DataFrame, out: Path) -> None:
     if "stagnation_flag" not in df.columns or df["stagnation_flag"].isna().all():
         return
 
+    plot_df = df.dropna(subset=["stagnation_flag", "pm10"])
+    if plot_df.empty:
+        return
+
     fig, ax = plt.subplots(figsize=(7, 5))
     sns.boxplot(
-        data=df, x="stagnation_flag", y="pm10", ax=ax,
+        data=plot_df, x="stagnation_flag", y="pm10", ax=ax,
         hue="stagnation_flag", palette={True: "#e53935", False: "#43a047"},
         legend=False,
     )

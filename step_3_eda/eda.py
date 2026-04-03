@@ -24,8 +24,9 @@ from step_3_eda.analysis import (
     top_correlations,
 )
 from step_3_eda.build_dataset import (
-    apply_missing_strategy,
     build_daily_dataset,
+    clean_dataset,
+    impute_missing,
     save_dataset,
 )
 from step_3_eda.db import connect_mysql, load_no2_hourly
@@ -66,6 +67,8 @@ def main() -> None:
         log.error(str(exc))
         sys.exit(1)
 
+    output_dir = Path(__file__).parent
+
     try:
         # ── 2. Build raw dataset ─────────────────────────────────────────────
         df_raw = build_daily_dataset(conn)
@@ -82,8 +85,15 @@ def main() -> None:
         # Plot 01 — missing values (BEFORE imputation)
         plot_missing_values(df_raw, PLOTS_DIR)
 
-        # ── 4. Apply missing-value strategy ──────────────────────────────────
-        df = apply_missing_strategy(df_raw)
+        # ── 4. Clean dataset (safe pre-split operations) ─────────────────────
+        df_clean = clean_dataset(df_raw)
+
+        # Save the clean (pre-imputation) dataset for ML pipelines.
+        # step_4/step_5 MUST call impute_missing() AFTER their train/test split.
+        save_dataset(df_clean, output_dir, filename="daily_dataset_clean.parquet")
+
+        # Full-dataset imputation for EDA visualization only (NOT for ML).
+        df, _ = impute_missing(df_clean)
 
         # ── 5. Analysis ─────────────────────────────────────────────────────
         log.info("─── Class distribution ───")
@@ -115,8 +125,7 @@ def main() -> None:
         no2_h = load_no2_hourly(conn)
         plot_no2_hourly_profile(no2_h, PLOTS_DIR)
 
-        # ── 7. Save clean dataset ───────────────────────────────────────────
-        output_dir = Path(__file__).parent
+        # ── 7. Save EDA-imputed dataset (for visualization/notebooks only) ──
         save_dataset(df, output_dir)
 
         # ── 8. Summary ──────────────────────────────────────────────────────

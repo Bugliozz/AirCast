@@ -25,6 +25,19 @@ PM10_LABELS: list[str] = ["verde", "giallo", "arancio", "rosso"]
 MISSING_THRESHOLD = 0.50
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Stagnation flag — fixed meteorological thresholds (no data-dependent stats)
+# ──────────────────────────────────────────────────────────────────────────────
+STAGNATION_PRESSURE_THRESHOLD = 1013.25  # hPa, standard atmosphere
+STAGNATION_WIND_THRESHOLD = 1.5          # m/s, Beaufort calm / light air
+STAGNATION_BLH_THRESHOLD = 500           # m, low boundary layer height
+
+# Continuous stagnation index — minimum clip values (physically meaningful)
+# These avoid division by zero while preserving meteorological interpretability.
+# Max stagnation_index = 1 / (0.1 * 10 * 1) = 1.0 (dimensionless, bounded)
+STAGNATION_INDEX_WIND_MIN = 0.1   # m/s — absolute calm threshold
+STAGNATION_INDEX_BLH_MIN = 10.0   # m — shallowest realistic mixing layer
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Plot settings
 # ──────────────────────────────────────────────────────────────────────────────
 PLOT_DPI = 150

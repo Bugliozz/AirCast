@@ -3,6 +3,7 @@ requests>=2.31
 
 # step_2_ingestion
 pymysql>=1.1
+cryptography>=41.0
 geopandas>=0.14
 shapely>=2.0
 opensearch-py>=2.0
@@ -12,3 +13,8 @@ matplotlib>=3.8
 seaborn>=0.13
 scipy>=1.11
 pyarrow>=14.0
+
+# step_4_regression / step_5_classification
+scikit-learn>=1.4
+xgboost>=2.0
+joblib
