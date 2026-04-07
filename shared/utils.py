@@ -13,6 +13,7 @@ from typing import Tuple, Optional, Dict, List, Literal
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline as SkPipeline
 from sklearn.preprocessing import StandardScaler, OrdinalEncoder
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.impute import SimpleImputer
@@ -26,7 +27,7 @@ def temporal_train_test_split(
     date_col: str = "data_giorno",
     train_ratio: float = 0.70,
     drop_cols: Optional[List[str]] = None,
-) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, pd.Series]:
     """Split dataset into train/test by time, keeping all stations of a day together.
 
     All rows belonging to the same day are assigned to the same set (train or test),
@@ -40,7 +41,8 @@ def temporal_train_test_split(
         drop_cols: Additional columns to drop from X (e.g. identifiers).
 
     Returns:
-        Tuple (X_train, y_train, X_test, y_test) as DataFrames/Series.
+        Tuple (X_train, y_train, X_test, y_test, train_dates) where train_dates
+        is a Series of the date_col values aligned with X_train rows.
     """
     if date_col not in df.columns:
         raise ValueError(f"Date column '{date_col}' not found in DataFrame.")
@@ -94,8 +96,9 @@ def temporal_train_test_split(
     y_train = train_df[target_col].reset_index(drop=True)
     X_test = test_df[feature_cols].reset_index(drop=True)
     y_test = test_df[target_col].reset_index(drop=True)
+    train_dates = train_df[date_col].reset_index(drop=True)
 
-    return X_train, y_train, X_test, y_test
+    return X_train, y_train, X_test, y_test, train_dates
 
 
 def impute_missing(
@@ -133,7 +136,7 @@ def impute_missing(
         if c.startswith(weather_prefixes) and not c.endswith(("_lag1", "_lag2", "_roll3"))
     ]
     pollutant_cols = [c for c in df.columns if c.startswith(("no2_", "o3_", "co_", "pm25_"))]
-    lag_cols = [c for c in df.columns if c.endswith(("_lag1", "_lag2", "_roll3", "_roll7"))]
+    lag_cols = [c for c in df.columns if c.endswith(("_lag1", "_lag2", "_roll3", "_roll7", "_diff"))]
     cols_to_impute = weather_cols + pollutant_cols + lag_cols
 
     if fit_mode:
@@ -161,9 +164,10 @@ def impute_missing(
     return df, medians
 
 
-# Default columns to drop (identifiers with no predictive value)
+# Default columns to drop (identifiers with no predictive value, and
+# target-derived columns that would cause label leakage)
 _DEFAULT_DROP_COLS: List[str] = [
-    "idstazione", "nomestazione", "comune", "data_giorno",
+    "idstazione", "nomestazione", "comune", "data_giorno", "classe_allerta",
 ]
 
 # Default categorical columns and their known categories for OrdinalEncoder
@@ -218,7 +222,7 @@ def build_preprocessor(
 
     Example::
 
-        X_train, y_train, X_test, y_test = temporal_train_test_split(df, "pm10")
+        X_train, y_train, X_test, y_test, train_dates = temporal_train_test_split(df, "pm10")
         X_train, train_medians = impute_missing(X_train)
         X_test, _ = impute_missing(X_test, medians=train_medians)
 
@@ -246,13 +250,17 @@ def build_preprocessor(
 
     # Build the OrdinalEncoder; if 'stagione' is present, supply known categories
     # so the encoder does not depend on the order they happen to appear in X_train.
+    # For other categorical columns, derive unique categories from X so that
+    # the categories list is always a list-of-lists (sklearn requirement).
     if categorical_cols:
         cat_categories: List = []
         for col in categorical_cols:
             if col == "stagione":
                 cat_categories.append(_STAGIONE_CATEGORIES)
             else:
-                cat_categories.append("auto")
+                # Derive sorted unique values from X; unknown values at inference
+                # time are handled by handle_unknown="use_encoded_value".
+                cat_categories.append(sorted(X[col].dropna().unique().tolist()))
         cat_transformer = OrdinalEncoder(
             categories=cat_categories,
             handle_unknown="use_encoded_value",
@@ -266,7 +274,15 @@ def build_preprocessor(
             dtype=np.float64,
         )
 
-    num_transformer = StandardScaler() if model_type == "linear" else "passthrough"
+    if model_type == "linear":
+        # Impute any residual NaNs (columns not covered by impute_missing)
+        # before scaling — ElasticNet cannot handle NaN.
+        num_transformer = SkPipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ])
+    else:
+        num_transformer = "passthrough"
 
     transformers: list = []
     if numeric_cols:
@@ -277,3 +293,117 @@ def build_preprocessor(
         transformers.append(("drop", "drop", drop_cols))
 
     return ColumnTransformer(transformers=transformers, remainder="drop", verbose_feature_names_out=False)
+
+
+def make_temporal_cv_splits(
+    X_train: pd.DataFrame,
+    y_train: Optional[pd.Series] = None,
+    *,
+    date_col: str = "data_giorno",
+    n_splits: int = 5,
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Build TimeSeriesSplit indices grouped by day to prevent intra-day leakage.
+
+    Sklearn's :class:`TimeSeriesSplit` operates on row indices — with multiple
+    stations per day, rows from the same day could land in both train and
+    validation folds.  This function splits on **unique days** first, then
+    expands the day-level fold boundaries back to row indices.
+
+    Args:
+        X_train: Training feature DataFrame (must contain *date_col*).
+        y_train: Optional training target Series.  When provided, a per-fold
+            class-coverage check is logged (useful for classification targets).
+        date_col: Column with the date used for temporal ordering.
+        n_splits: Number of CV folds (default 5).
+
+    Returns:
+        List of ``(train_indices, val_indices)`` numpy arrays, one per fold.
+        These can be passed directly to sklearn search objects via the ``cv``
+        parameter.
+
+    Raises:
+        ValueError: If *date_col* is missing or there are fewer unique days
+            than ``n_splits + 1``.
+    """
+    if date_col not in X_train.columns:
+        raise ValueError(
+            f"Date column '{date_col}' not found in X_train. "
+            "Make sure identifiers are still present before calling this function."
+        )
+
+    # --- 1. Map each unique day to the row indices that belong to it ----------
+    unique_days = np.sort(X_train[date_col].unique())
+    n_days = len(unique_days)
+
+    if n_days < n_splits + 1:
+        raise ValueError(
+            f"Need at least {n_splits + 1} unique days for {n_splits} folds, "
+            f"but only {n_days} found."
+        )
+
+    # day → array of row positions (integer-location based)
+    day_to_rows: Dict[object, np.ndarray] = {}
+    for day in unique_days:
+        day_to_rows[day] = np.where(X_train[date_col].values == day)[0]
+
+    # --- 2. Split *days* using sklearn TimeSeriesSplit -------------------------
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    day_indices = np.arange(n_days)
+
+    splits: List[Tuple[np.ndarray, np.ndarray]] = []
+
+    for fold_idx, (day_train_idx, day_val_idx) in enumerate(tscv.split(day_indices)):
+        # Expand day-level indices to row-level indices
+        train_rows = np.concatenate(
+            [day_to_rows[unique_days[i]] for i in day_train_idx]
+        )
+        val_rows = np.concatenate(
+            [day_to_rows[unique_days[i]] for i in day_val_idx]
+        )
+
+        splits.append((train_rows, val_rows))
+
+        train_day_range = (unique_days[day_train_idx[0]], unique_days[day_train_idx[-1]])
+        val_day_range = (unique_days[day_val_idx[0]], unique_days[day_val_idx[-1]])
+
+        logger.info(
+            "CV fold %d/%d — train: %d days (%s → %s), %d rows | "
+            "val: %d days (%s → %s), %d rows",
+            fold_idx + 1,
+            n_splits,
+            len(day_train_idx),
+            train_day_range[0],
+            train_day_range[1],
+            len(train_rows),
+            len(day_val_idx),
+            val_day_range[0],
+            val_day_range[1],
+            len(val_rows),
+        )
+
+        # --- 3. Class-coverage sanity check (classification targets) ----------
+        if y_train is not None:
+            train_classes = set(y_train.iloc[train_rows].unique())
+            val_classes = set(y_train.iloc[val_rows].unique())
+            all_classes = set(y_train.unique())
+
+            missing_in_train = all_classes - train_classes
+            missing_in_val = all_classes - val_classes
+
+            if missing_in_train:
+                logger.warning(
+                    "CV fold %d/%d — classes MISSING in train: %s",
+                    fold_idx + 1, n_splits, sorted(missing_in_train),
+                )
+            if missing_in_val:
+                logger.warning(
+                    "CV fold %d/%d — classes MISSING in val: %s",
+                    fold_idx + 1, n_splits, sorted(missing_in_val),
+                )
+
+    logger.info(
+        "make_temporal_cv_splits: generated %d folds from %d unique days.",
+        n_splits, n_days,
+    )
+
+    return splits

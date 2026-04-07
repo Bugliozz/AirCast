@@ -125,8 +125,12 @@ def _add_lag_and_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
         df["pm10_lag1"] = df.groupby("idstazione")["pm10"].shift(1)
         df["pm10_lag2"] = df.groupby("idstazione")["pm10"].shift(2)
         df["pm10_roll7"] = df.groupby("idstazione")["pm10"].transform(
-            lambda x: x.rolling(7, min_periods=1).mean()
+            lambda x: x.shift(1).rolling(7, min_periods=1).mean()
         )
+        df["pm10_roll3"] = df.groupby("idstazione")["pm10"].transform(
+            lambda x: x.shift(1).rolling(3, min_periods=1).mean()
+        )
+        df["pm10_diff"] = df["pm10_lag1"] - df["pm10_lag2"]
 
     # Come da Brainstorm: Lag variabili meteo chiave (1-day, 2-day lag)
     for col in ["pressure_mean", "wind_speed_mean", "blh_mean", "temp_mean"]:
@@ -136,11 +140,11 @@ def _add_lag_and_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
 
     if "pressure_mean" in df.columns:
         df["pressure_roll3"] = df.groupby("idstazione")["pressure_mean"].transform(
-            lambda x: x.rolling(3, min_periods=1).mean()
+            lambda x: x.shift(1).rolling(3, min_periods=3).mean()
         )
     if "wind_speed_mean" in df.columns:
         df["wind_speed_roll3"] = df.groupby("idstazione")["wind_speed_mean"].transform(
-            lambda x: x.rolling(3, min_periods=1).mean()
+            lambda x: x.shift(1).rolling(3, min_periods=3).mean()
         )
 
     return df
@@ -160,6 +164,7 @@ def _add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
         stagione=mese.map(MONTH_TO_SEASON),
         giorno_settimana=dow,                       # 0=Mon … 6=Sun
         is_weekend=dow.isin([5, 6]),
+        heating_season=mese.isin([10, 11, 12, 1, 2, 3]).astype(int),
         # Cyclic encoding: Dicembre(12) e Gennaio(1) risultano vicini
         mese_sin=np.sin(2 * np.pi * mese / 12),
         mese_cos=np.cos(2 * np.pi * mese / 12),
@@ -234,6 +239,21 @@ def _add_alert_class(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Redundant-feature removal
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Columns with |r| > 0.98 against a kept alternative — dropping them improves
+# ElasticNet conditioning and reduces noise in tree models.
+_REDUNDANT_COLS = ["temp_max", "temp_min", "pressure_mean_lag2"]
+
+
+def _drop_redundant_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop highly-correlated features identified in the EDA audit."""
+    cols_to_drop = [c for c in _REDUNDANT_COLS if c in df.columns]
+    return df.drop(columns=cols_to_drop)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Missing-value strategy
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -273,7 +293,7 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     if pollutant_cols:
         df[pollutant_cols] = df.groupby("idstazione")[pollutant_cols].transform(lambda s: s.ffill())
 
-    lag_cols = [c for c in df.columns if c.endswith(("_lag1", "_lag2", "_roll3", "_roll7"))]
+    lag_cols = [c for c in df.columns if c.endswith(("_lag1", "_lag2", "_roll3", "_roll7", "_diff"))]
     if lag_cols:
         df[lag_cols] = df.groupby("idstazione")[lag_cols].transform(lambda s: s.ffill())
 
@@ -312,7 +332,7 @@ def impute_missing(
     weather_cols = [c for c in df.columns if c.startswith(weather_prefixes)
                     and not c.endswith(("_lag1", "_lag2", "_roll3"))]
     pollutant_cols = [c for c in df.columns if c.startswith(("no2_", "o3_", "co_", "pm25_"))]
-    lag_cols = [c for c in df.columns if c.endswith(("_lag1", "_lag2", "_roll3", "_roll7"))]
+    lag_cols = [c for c in df.columns if c.endswith(("_lag1", "_lag2", "_roll3", "_roll7", "_diff"))]
     cols_to_impute = weather_cols + pollutant_cols + lag_cols
 
     if fit_mode:
@@ -391,6 +411,7 @@ def build_daily_dataset(conn: pymysql.Connection) -> pd.DataFrame:
     df = _add_alert_class(df)
     df = _add_stagnation_flag(df)
     df = _add_stagnation_index(df)
+    df = _drop_redundant_features(df)
 
     return df
 
