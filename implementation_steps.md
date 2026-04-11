@@ -9,48 +9,48 @@ Per la descrizione tecnica dettagliata di ogni step, vedi [`technical_doc.md`](t
 
 ### 5.1 Scaffold directory
 
-- [ ] Crea `step_5_classification/__init__.py` (vuoto, marca il package Python)
-- [ ] Crea directory `step_5_classification/artifacts/plots/`
+- [x] Crea `step_5_classification/__init__.py` (vuoto, marca il package Python)
+- [x] Crea directory `step_5_classification/artifacts/plots/`
 
 ### 5.2 `config.py`
 
-- [ ] Definisci `LABEL_MAP = {'verde': 0, 'giallo': 1, 'arancio': 2, 'rosso': 3}`
-- [ ] Definisci `TARGET_COL = "classe_allerta"` e `DROP_COLS = ["idstazione", "nomestazione", "comune", "pm10"]`
-- [ ] Definisci `N_CV_SPLITS`, `CV_SCORING = "f1_macro"`, `RANDOM_STATE`, `RANDOM_SEARCH_N_ITER`, `RANDOM_SEARCH_N_JOBS`
-- [ ] Definisci `ARTIFACTS_DIR`, `PLOTS_DIR`, `METRICS_FILE`
-- [ ] Definisci `LOGISTIC_PARAM_GRID` con `C ∈ [0.01, 0.1, 1.0, 10.0]`
-- [ ] Definisci `RANDOM_FOREST_PARAM_DIST` (`n_estimators`, `max_depth`, `min_samples_leaf`)
-- [ ] Definisci `XGBOOST_PARAM_DIST` (`n_estimators`, `max_depth`, `learning_rate`, `subsample`, `min_child_weight`, `colsample_bytree`)
+- [x] Definisci `LABEL_MAP = {'verde': 0, 'giallo': 1, 'arancio': 2, 'rosso': 3}`
+- [x] Definisci `TARGET_COL = "classe_allerta"` e `DROP_COLS = ["idstazione", "nomestazione", "comune", "pm10"]`
+- [x] Definisci `N_CV_SPLITS`, `CV_SCORING = "f1_macro"`, `RANDOM_STATE`, `RANDOM_SEARCH_N_ITER`, `RANDOM_SEARCH_N_JOBS`
+- [x] Definisci `ARTIFACTS_DIR`, `PLOTS_DIR`, `METRICS_FILE`
+- [x] Definisci `LOGISTIC_PARAM_GRID` con `C ∈ [0.01, 0.1, 1.0, 10.0]`
+- [x] Definisci `RANDOM_FOREST_PARAM_DIST` (`n_estimators`, `max_depth`, `min_samples_leaf`)
+- [x] Definisci `XGBOOST_PARAM_DIST` (`n_estimators`, `max_depth`, `learning_rate`, `subsample`, `min_child_weight`, `colsample_bytree`)
 
 ### 5.3 `train.py`
 
-- [ ] Carica `daily_dataset_clean.parquet`
-- [ ] `temporal_train_test_split` con `TARGET_COL` e `DROP_COLS`
-- [ ] Applica `.map(LABEL_MAP)` su `y_train` e `y_test` (non `OrdinalEncoder`)
-- [ ] `impute_missing(X_train)` → ottieni `train_medians`; poi `impute_missing(X_test, medians=train_medians)`
-- [ ] `make_temporal_cv_splits` con `data_giorno` reintrodotta su copia di `X_train`
-- [ ] Build + fit pipeline **Logistic Regression**: `build_preprocessor(model_type="linear")` → `LogisticRegression(penalty="elasticnet", solver="saga", l1_ratio=0.5, class_weight="balanced")` → `GridSearchCV(param_grid=LOGISTIC_PARAM_GRID, scoring="f1_macro")`
-- [ ] Build + fit pipeline **Random Forest Classifier**: `build_preprocessor(model_type="tree")` → `RandomForestClassifier(class_weight="balanced")` → `RandomizedSearchCV(n_iter=50, scoring="f1_macro")`
-- [ ] Build + fit pipeline **XGBoost Classifier**: `build_preprocessor(model_type="tree")` → `XGBClassifier(objective="multi:softprob", num_class=4)` → `RandomizedSearchCV(n_iter=50, scoring="f1_macro")` con `classifier__sample_weight=compute_sample_weight("balanced", y_train)`
-- [ ] Selezione best model per `best_score_` (f1_macro CV) tra i tre
-- [ ] Salva `logistic_regression_best.joblib`, `random_forest_best.joblib`, `xgboost_best.joblib`, `best_model.joblib`
+- [x] Carica `daily_dataset_clean.parquet`
+- [x] `temporal_train_test_split` con `TARGET_COL` e `DROP_COLS`
+- [x] Applica `.map(LABEL_MAP)` su `y_train` e `y_test` (non `OrdinalEncoder`)
+- [x] `impute_missing(X_train)` → ottieni `train_medians`; poi `impute_missing(X_test, medians=train_medians)`
+- [x] `make_temporal_cv_splits` con `data_giorno` reintrodotta su copia di `X_train`
+- [x] Build + fit pipeline **Logistic Regression**: `build_preprocessor(model_type="linear")` → `LogisticRegression(penalty="elasticnet", solver="saga", l1_ratio=0.5, class_weight="balanced")` → `GridSearchCV(param_grid=LOGISTIC_PARAM_GRID, scoring="f1_macro")`
+- [x] Build + fit pipeline **Random Forest Classifier**: `build_preprocessor(model_type="tree")` → `RandomForestClassifier(class_weight="balanced")` → `RandomizedSearchCV(n_iter=50, scoring="f1_macro")`
+- [x] Build + fit pipeline **XGBoost Classifier**: `build_preprocessor(model_type="tree")` → `XGBClassifier(objective="multi:softprob", num_class=4)` → `RandomizedSearchCV(n_iter=50, scoring="f1_macro")` con `classifier__sample_weight=compute_sample_weight("balanced", y_train)`
+- [x] Selezione best model per `best_score_` (f1_macro CV) tra i tre
+- [x] Salva `logistic_regression_best.joblib`, `random_forest_best.joblib`, `xgboost_best.joblib`, `best_model.joblib`
 
 ### 5.4 `evaluate.py`
 
-- [ ] Carica i tre modelli `.joblib` salvati
-- [ ] `model.predict(X_test)` per ogni modello (ritorna indici 0–3)
-- [ ] `classification_report(output_dict=True)` con `target_names=["verde","giallo","arancio","rosso"]` per ogni modello
-- [ ] Calcola `severe_error_rate = (np.abs(y_pred - y_test) >= 2).mean()` per ogni modello
-- [ ] Plot confusion matrix heatmap (`seaborn.heatmap` annotata con conteggi) per ogni modello → salva in `artifacts/plots/`
-- [ ] `permutation_importance(best_model, X_test, y_test, scoring="f1_macro", n_repeats=10)` → plot feature importance → salva in `artifacts/plots/`
-- [ ] Salva `classification_metrics.json` con f1_macro, per_class, severe_error_rate per ogni modello + `"best_model"` + `"n_test_samples"`
+- [x] Carica i tre modelli `.joblib` salvati
+- [x] `model.predict(X_test)` per ogni modello (ritorna indici 0–3)
+- [x] `classification_report(output_dict=True)` con `target_names=["verde","giallo","arancio","rosso"]` per ogni modello
+- [x] Calcola `severe_error_rate = (np.abs(y_pred - y_test) >= 2).mean()` per ogni modello
+- [x] Plot confusion matrix heatmap (`seaborn.heatmap` annotata con conteggi) per ogni modello → salva in `artifacts/plots/`
+- [x] `permutation_importance(best_model, X_test, y_test, scoring="f1_macro", n_repeats=10)` → plot feature importance → salva in `artifacts/plots/`
+- [x] Salva `classification_metrics.json` con f1_macro, per_class, severe_error_rate per ogni modello + `"best_model"` + `"n_test_samples"`
 
 ### 5.5 Calibrazione probabilità (opzionale)
 
-- [ ] Inizializza `tscv = make_temporal_cv_splits(X_train_con_date, n_splits=5)`
-- [ ] `CalibratedClassifierCV(best_model, method="sigmoid", cv=tscv).fit(X_train, y_train)` (ATTENZIONE: non fittare mai sul test set)
-- [ ] Salva `best_model_calibrated.joblib`
-- [ ] Reliability diagram (calibration curve one-vs-rest) prima/dopo per ogni classe
+- [x] Inizializza `tscv = make_temporal_cv_splits(X_train_con_date, n_splits=5)`
+- [x] `CalibratedClassifierCV(best_model, method="sigmoid", cv=tscv).fit(X_train, y_train)` (ATTENZIONE: non fittare mai sul test set)
+- [x] Salva `best_model_calibrated.joblib`
+- [x] Reliability diagram (calibration curve one-vs-rest) prima/dopo per ogni classe
 
 ### 5.6 Verifica
 

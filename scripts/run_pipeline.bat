@@ -24,9 +24,22 @@ call "%~dp0run_04_evaluate.bat"
 if errorlevel 1 goto error
 echo.
 
+call "%~dp0run_05_train.bat"
+if errorlevel 1 goto error
+echo.
+
+call "%~dp0run_05_evaluate.bat"
+if errorlevel 1 goto error
+echo.
+
+call "%~dp0run_05_calibrate.bat"
+if errorlevel 1 goto error
+echo.
+
 echo ==========================================
 echo   Pipeline completa!
 echo   Risultati in step_4_regression/artifacts/
+echo             step_5_classification/artifacts/
 echo ==========================================
 pause
 exit /b 0
