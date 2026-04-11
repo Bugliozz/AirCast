@@ -4,7 +4,7 @@ cd /d "%~dp0.."
 
 echo === Step 2: Ingestion ===
 
-call .venv\Scripts\activate.bat
+call venv\Scripts\activate.bat
 
 echo [1/2] Avvio container MySQL...
 docker compose -f step_2_ingestion/compose.yaml up -d mysql

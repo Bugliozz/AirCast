@@ -393,7 +393,7 @@ python -m step_1_collection.backfill \
     --sleep 2
 ```
 
-**Ottimizzazione coordinate:** le coordinate sono arrotondate a 1 decimale (`COORD_ROUND_DP = 1`, ~11 km di precisione). Le ~170 stazioni Lombardia si riducono a ~15–20 celle uniche per Open-Meteo → riduce drasticamente le chiamate API rispettando i rate limit.
+**Ottimizzazione coordinate:** le coordinate sono arrotondate a 1 decimale (`COORD_ROUND_DP = 1`, ~11 km di precisione). Le ~170 stazioni Lombardia si riducono a ~15-20 celle uniche per Open-Meteo: questo riduce drasticamente le chiamate API rispettando i rate limit, senza diminuire il numero di record finali per stazione. Il compromesso e' una minore risoluzione spaziale delle feature meteo, perche' stazioni vicine condividono la stessa serie Open-Meteo.
 
 **Output:** `data/raw/{date}_measurements.json`, `data/raw/{date}_weather.json`, `data/raw/backfill_summary_{start}_{end}.json`.
 
@@ -476,15 +476,15 @@ RANDOM_SEARCH_N_ITER = 50
 
 ### 11.2 Pipeline per Modello
 
-Tutti e tre i modelli usano `TransformedTargetRegressor(func=np.log1p, inverse_func=np.expm1)`. **Motivazione:** la distribuzione di PM10 è asimmetrica a destra (molti giorni bassi, pochi picchi elevati); il log-transform stabilizza la varianza e riduce la sottostima sistematica dei picchi, che sono i giorni critici per la salute.
+Tutti e tre i modelli usano `TransformedTargetRegressor(func=np.log1p, inverse_func=np.expm1)`. **Motivazione:** `pm10` è un target continuo, non negativo e fortemente asimmetrico a destra (molti giorni con valori moderati, pochi picchi elevati). La trasformazione `log1p` comprime gli estremi, rende più stabile la varianza e sposta l'ottimizzazione verso errori più vicini a una logica relativa che assoluta, migliorando la robustezza del fit sui picchi senza cambiare la natura del problema. `class_weight` e `scale_pos_weight`, invece, sono strumenti nati per classificazione sbilanciata e non sono la scelta naturale per una regressione continua; l'alternativa diretta in regressione sarebbe semmai pesare i singoli campioni o usare una loss custom. In questo progetto si è preferito `log1p` perché corregge prima di tutto la forma statistica del target, mantenendo una pipeline semplice, stabile e coerente per tutti i modelli.
 
 **ElasticNet:**
 ```
 ColumnTransformer(StandardScaler su numeriche)
-  → TransformedTargetRegressor
-      → ElasticNet(max_iter=2000)
+  -> TransformedTargetRegressor
+      -> ElasticNet(max_iter=2000)
 ```
-Search: `GridSearchCV` — 6 alpha × 4 l1_ratio = **24 combinazioni** × 5 fold = 120 fit.
+Search: `GridSearchCV`, 6 alpha x 4 l1_ratio = **24 combinazioni** x 5 fold = 120 fit.
 
 ```python
 "regressor__regressor__alpha":    [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
@@ -494,10 +494,10 @@ Search: `GridSearchCV` — 6 alpha × 4 l1_ratio = **24 combinazioni** × 5 fold
 **XGBoost:**
 ```
 ColumnTransformer(passthrough su numeriche)
-  → TransformedTargetRegressor
-      → XGBRegressor(tree_method="hist")
+  -> TransformedTargetRegressor
+      -> XGBRegressor(tree_method="hist")
 ```
-Search: `RandomizedSearchCV(n_iter=50)` — spazio 4×4×3×3×3×3 = 1.296 combinazioni; n_iter=50 ≈ 3.9% del grid. 250 fit totali.
+Search: `RandomizedSearchCV(n_iter=50)`, spazio 4 x 4 x 3 x 3 x 3 x 3 = 1.296 combinazioni; `n_iter=50` copre circa il 3.9% del grid. 250 fit totali.
 
 ```python
 "n_estimators":    [100, 300, 500, 800]
@@ -511,10 +511,10 @@ Search: `RandomizedSearchCV(n_iter=50)` — spazio 4×4×3×3×3×3 = 1.296 comb
 **RandomForest:**
 ```
 ColumnTransformer(passthrough su numeriche)
-  → TransformedTargetRegressor
-      → RandomForestRegressor
+  -> TransformedTargetRegressor
+      -> RandomForestRegressor
 ```
-Search: `RandomizedSearchCV(n_iter=50)` — spazio 3×3×3 = 27 combinazioni (over-sampled, equivale a ~1.85× il grid completo). 250 fit totali.
+Search: `RandomizedSearchCV(n_iter=50)`, spazio 3 x 3 x 3 = 27 combinazioni. Con 250 fit totali la ricerca ricampiona piu' volte il piccolo spazio disponibile.
 
 ```python
 "n_estimators":    [100, 300, 500]
@@ -522,50 +522,52 @@ Search: `RandomizedSearchCV(n_iter=50)` — spazio 3×3×3 = 27 combinazioni (ov
 "min_samples_leaf":[2, 5, 10]
 ```
 
-**Motivazione GridSearch per ElasticNet vs RandomizedSearch per gli alberi:** ElasticNet ha uno spazio piccolo (24 combinazioni) e il grid completo è computazionalmente conveniente; XGBoost e RandomForest hanno spazi molto più grandi e RandomizedSearch con n_iter=50 cattura il 90% della qualità con frazione del costo.
+**Motivazione GridSearch per ElasticNet vs RandomizedSearch per gli alberi:** ElasticNet ha uno spazio piccolo (24 combinazioni), quindi il grid completo e' computazionalmente conveniente. XGBoost e RandomForest hanno spazi molto piu' ampi; in questi casi `RandomizedSearchCV` offre un buon compromesso tra costo di calcolo e qualita' della soluzione.
 
-**Motivazione StandardScaler solo per ElasticNet:** i modelli ad albero sono invarianti alla scala delle feature (le soglie vengono trovate indipendentemente dal range). StandardScaler su alberi spreca cicli e non migliora le metriche. ElasticNet invece è sensibile alla scala perché la penalizzazione L1/L2 tratta tutte le feature simmetricamente.
+**Motivazione StandardScaler solo per ElasticNet:** i modelli ad albero sono sostanzialmente invarianti alla scala delle feature, perche' apprendono soglie e non distanze. Applicare `StandardScaler` agli alberi aggiunge costo senza benefici misurabili. ElasticNet, invece, e' sensibile alla scala perche' la penalizzazione L1/L2 agisce direttamente sui coefficienti.
 
-### 11.3 Risultati sul Test Set (70/30 split temporale, 7.064 campioni)
+### 11.3 Risultati sul Test Set (70/30 split temporale, 15.544 campioni)
 
 | Modello | R² | RMSE (µg/m³) | MAE (µg/m³) | RMSE rosso |
 |---------|-----|-------------|-------------|------------|
-| **Random Forest** | **0.555** | **11.92** | **8.31** | **19.78** |
-| XGBoost | 0.521 | 12.37 | 8.64 | 21.22 |
-| ElasticNet | -6.98 | 50.51 | 9.96 | 107.03 |
+| ElasticNet | 0.351 | 13.78 | 9.98 | 29.56 |
+| **XGBoost** | **0.721** | **9.03** | **6.08** | **17.36** |
+| Random Forest | 0.693 | 9.47 | 6.45 | 18.11 |
 
-**Best model:** `random_forest` (salvato in `artifacts/best_model.joblib`).
+**Best model:** `xgboost` (salvato in `artifacts/best_model.joblib`).
 
 **Distribuzione classi nel test set:**
 
 | Classe | N campioni |
 |--------|------------|
-| verde | 1.492 (21%) |
-| giallo | 2.180 (31%) |
-| arancio | 1.869 (26%) |
-| rosso | 1.523 (22%) |
+| verde | 5.339 (34.3%) |
+| giallo | 4.992 (32.1%) |
+| arancio | 3.099 (19.9%) |
+| rosso | 2.114 (13.6%) |
 
 ### 11.4 Analisi dei Risultati e Limiti
 
-**Perché R² ~0.55 con RMSE ~12 µg/m³?**
+**Perche' R² ~0.72 con RMSE ~9 µg/m³?**
 
-Le feature `giorno_settimana`, `stagione`, `heating_season` catturano lo **shift della media attesa** tra categorie (un lunedì di gennaio ha PM10 mediamente più alto di una domenica di agosto), ma non il valore effettivo del singolo giorno. La varianza residua è dominata da eventi meteorologici stocastici:
+Le feature meteorologiche e temporali disponibili spiegano una quota consistente della variabilita' giornaliera del PM10, soprattutto quando il modello puo' apprendere relazioni non lineari, soglie e interazioni tra ristagno atmosferico, stagionalita' e proxy emissivi. XGBoost beneficia in particolare della capacita' di modellare pattern complessi e della logica boosting, che corregge progressivamente gli errori residui.
 
-- Lunedì di gennaio con forte vento → PM10 basso (dispersione)
-- Domenica di agosto con stagnazione → PM10 alto (accumulo)
+Le feature `giorno_settimana`, `stagione` e `heating_season` catturano lo **shift della media attesa** tra categorie, mentre le variabili meteo descrivono i meccanismi di accumulo o dispersione. Per esempio:
+
+- Giorno invernale con vento debole e BLH bassa -> accumulo di PM10
+- Giorno piovoso o ventilato -> dispersione/deposizione e concentrazioni piu' basse
 
 | Driver varianza | Catturabile con questo dataset? |
 |-----------------|--------------------------------|
-| Vento / BLH (dispersione) | ✅ già nel dataset |
-| Pioggia (wet deposition) | ✅ già nel dataset |
-| Inversione termica | ⚠️ parziale (BLH come proxy) |
-| Trasporto transfrontaliero (polvere sahariana, incendi) | ❌ richiederebbe HYSPLIT o satellite AOD |
-| Traffico reale (eventi, neve, scioperi) | ❌ `is_weekend` è proxy statistico |
+| Vento / BLH (dispersione) | Si', gia' nel dataset |
+| Pioggia (wet deposition) | Si', gia' nel dataset |
+| Inversione termica | Parziale, con BLH come proxy |
+| Trasporto transfrontaliero (polvere sahariana, incendi) | No, richiederebbe HYSPLIT o satellite AOD |
+| Traffico reale (eventi, neve, scioperi) | No, `is_weekend` e' solo un proxy statistico |
 
-**Conclusione:** R² ~0.55 è probabilmente vicino al **tetto informativo** del dataset con sole feature meteo locali. La quota inesplicata (~45%) è in gran parte rumore episodico non prevedibile senza dati aggiuntivi.
+**Conclusione:** R² ~0.72 indica che il dataset contiene un segnale predittivo forte, ma resta comunque una quota non spiegata (~28%) legata a fattori episodici o non osservati. Il modello e' quindi utile per previsione operativa e analisi comparativa, ma non esaurisce tutta la dinamica fisica del fenomeno.
 
-**Perché ElasticNet fallisce (R² = -6.98)?**  
-La relazione PM10 ↔ meteo è intrinsecamente non-lineare (soglie, interazioni, effetti stagionali asimmetrici). ElasticNet impone linearità e non riesce a catturare queste strutture. Il MAE di ElasticNet (9.96) è comparabile agli alberi, ma l'RMSE (50.51) è catastrofico: il modello produce predizioni molto distanti sui picchi (RMSE rosso = 107 µg/m³), che è il caso più critico per la salute pubblica.
+**Perche' ElasticNet resta inferiore (R² = 0.351)?**  
+La relazione PM10 <-> meteo e' intrinsecamente non lineare, con soglie, interazioni ed effetti stagionali asimmetrici. ElasticNet impone una struttura lineare globale e, pur beneficiando della trasformazione `log1p`, non rappresenta bene ne' i picchi ne' i cambi di regime. Il risultato e' un modello piu' stabile rispetto alla versione iniziale, ma ancora nettamente peggiore dei modelli ad albero sia in RMSE complessivo sia nella fascia rossa (29.56 µg/m³ contro 17.36 di XGBoost).
 
 ---
 

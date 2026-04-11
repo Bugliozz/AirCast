@@ -47,7 +47,8 @@ Per la descrizione tecnica dettagliata di ogni step, vedi [`technical_doc.md`](t
 
 ### 5.5 Calibrazione probabilità (opzionale)
 
-- [ ] `CalibratedClassifierCV(best_model, method="sigmoid", cv="prefit").fit(X_test, y_test)`
+- [ ] Inizializza `tscv = make_temporal_cv_splits(X_train_con_date, n_splits=5)`
+- [ ] `CalibratedClassifierCV(best_model, method="sigmoid", cv=tscv).fit(X_train, y_train)` (ATTENZIONE: non fittare mai sul test set)
 - [ ] Salva `best_model_calibrated.joblib`
 - [ ] Reliability diagram (calibration curve one-vs-rest) prima/dopo per ogni classe
 

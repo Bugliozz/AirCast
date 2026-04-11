@@ -11,7 +11,7 @@ if not exist "step_3_eda\daily_dataset_clean.parquet" (
     exit /b 1
 )
 
-call .venv\Scripts\activate.bat
+call venv\Scripts\activate.bat
 
 python -m step_4_regression.train
 if errorlevel 1 (

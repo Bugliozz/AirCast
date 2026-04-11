@@ -18,7 +18,7 @@ if not exist "step_4_regression\artifacts\elasticnet_best.joblib" (
     exit /b 1
 )
 
-call .venv\Scripts\activate.bat
+call venv\Scripts\activate.bat
 
 python -m step_4_regression.evaluate
 if errorlevel 1 (

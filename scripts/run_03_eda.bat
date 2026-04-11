@@ -4,7 +4,7 @@ cd /d "%~dp0.."
 
 echo === Step 3: EDA ===
 
-call .venv\Scripts\activate.bat
+call venv\Scripts\activate.bat
 
 python -m step_3_eda.eda
 if errorlevel 1 (
