@@ -1,7 +1,7 @@
 """Probability calibration for Step 5 — Classification (step 5.5).
 
 Fits ``CalibratedClassifierCV`` on the best model using temporal CV splits
-(sigmoid / Platt scaling), then generates reliability diagrams (one-vs-rest
+(isotonic regression), then generates reliability diagrams (one-vs-rest
 calibration curves) comparing uncalibrated vs. calibrated probabilities for
 each alert class.
 
@@ -184,7 +184,7 @@ def run_calibration(artifacts_dir_path: str | None = None) -> Path:
     Steps:
     1. Load best_model.joblib (uncalibrated) and training data.
     2. Rebuild temporal CV splits from the training dates.
-    3. Fit ``CalibratedClassifierCV(method="sigmoid", cv=tscv)`` on the
+    3. Fit ``CalibratedClassifierCV(method="isotonic", cv=tscv)`` on the
        training set (never on the test set).
     4. Save ``best_model_calibrated.joblib``.
     5. Plot reliability diagrams (before/after) on the test set.
@@ -220,11 +220,11 @@ def run_calibration(artifacts_dir_path: str | None = None) -> Path:
     )
     logger.info("Built %d temporal CV splits for calibration", len(tscv))
 
-    # 4. Fit calibrated model (sigmoid / Platt scaling)
-    logger.info("Fitting CalibratedClassifierCV(method='sigmoid') ...")
+    # 4. Fit calibrated model (isotonic regression)
+    logger.info("Fitting CalibratedClassifierCV(method='isotonic') ...")
     calibrated_model = CalibratedClassifierCV(
         estimator=best_model,
-        method="sigmoid",
+        method="isotonic",
         cv=tscv,
     )
     calibrated_model.fit(X_train, y_train)

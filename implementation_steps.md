@@ -48,16 +48,16 @@ Per la descrizione tecnica dettagliata di ogni step, vedi [`technical_doc.md`](t
 ### 5.5 Calibrazione probabilità (opzionale)
 
 - [x] Inizializza `tscv = make_temporal_cv_splits(X_train_con_date, n_splits=5)`
-- [x] `CalibratedClassifierCV(best_model, method="sigmoid", cv=tscv).fit(X_train, y_train)` (ATTENZIONE: non fittare mai sul test set)
+- [x] `CalibratedClassifierCV(best_model, method="isotonic", cv=tscv).fit(X_train, y_train)` (ATTENZIONE: non fittare mai sul test set)
 - [x] Salva `best_model_calibrated.joblib`
 - [x] Reliability diagram (calibration curve one-vs-rest) prima/dopo per ogni classe
 
 ### 5.6 Verifica
 
-- [ ] `python -m step_5_classification.train` completa senza errori
-- [ ] `python -m step_5_classification.evaluate` completa senza errori
-- [ ] `classification_metrics.json` presente con valori plausibili (f1_macro > 0)
-- [ ] Tutti i plot di confusion matrix salvati in `artifacts/plots/`
+- [x] `python -m step_5_classification.train` completa senza errori
+- [x] `python -m step_5_classification.evaluate` completa senza errori
+- [x] `classification_metrics.json` presente con valori plausibili (f1_macro > 0)
+- [x] Tutti i plot di confusion matrix salvati in `artifacts/plots/`
 
 ---
 

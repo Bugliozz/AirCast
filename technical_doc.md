@@ -622,8 +622,8 @@ StandardScaler → LogisticRegression(penalty='elasticnet', solver='saga', class
 
 ### 12.5 Calibrazione delle Probabilità (opzionale)
 
-`CalibratedClassifierCV(method='sigmoid')` sul miglior modello post-tuning.  
-**Motivazione:** per un sistema di allerta pubblica, "73% probabilità di Rosso" è più utile di un semplice label. Il metodo `sigmoid` è più stabile di `isotonic` con 4 classi su un dataset non enorme.
+`CalibratedClassifierCV(method='isotonic')` sul miglior modello post-tuning.  
+**Motivazione:** per un sistema di allerta pubblica, "73% probabilità di Rosso" è più utile di un semplice label. Il metodo `isotonic` (regressione isotonica non-parametrica) ottiene un macro-ECE inferiore rispetto a `sigmoid` (Platt scaling), che tendeva a peggiorare la calibrazione delle classi intermedie (giallo) già ben calibrate dal modello XGBoost.
 
 ---
 
