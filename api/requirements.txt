@@ -1,0 +1,21 @@
+# Runtime dependencies for the Cloud Run API container.
+# The training pipeline (step_2_ingestion, step_3_eda, step_4_regression,
+# step_5_classification) has a superset in the root requirements.txt; keep
+# this file MySQL-free so the deployed container never depends on pymysql.
+
+pandas>=2.0
+pyarrow>=14.0
+requests>=2.31
+
+# Models + feature pipeline
+scikit-learn>=1.4
+xgboost>=2.0
+joblib
+
+# Web framework
+fastapi>=0.110
+pydantic>=2.0
+uvicorn[standard]>=0.29
+
+# Ephemeral 7-day window fetched from GCS
+google-cloud-storage>=2.14

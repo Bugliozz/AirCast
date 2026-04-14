@@ -22,20 +22,43 @@ Raccogliere dati giornalieri sulla qualità dell'aria dalle stazioni ARPA Lombar
 
 ## 2. Architettura della Pipeline
 
+La pipeline e' divisa in due flussi complementari:
+
+- **Flusso live su GCP (Lab 4 pattern):** Cloud Scheduler → Cloud Run Job → Cloud Storage. Raccolta continua di dati freschi in JSON.
+- **Flusso training locale (one-shot):** `data/raw/` → MySQL (solo staging) → parquet → modelli `.joblib`. Produce i modelli e il dataset congelato che vengono bundled nel container deployato.
+
 ```
+                  === FLUSSO LIVE (GCP, Lab 4 pattern) ===
 ┌─────────────────────────────────────────────────┐
-│  STEP 1 — Raccolta Dati (backfill/giornaliero)  │
-│  ARPA Lombardia Socrata API + Open-Meteo        │
-│  Output: data/raw/{date}_measurements.json      │
-│           data/raw/{date}_weather.json          │
+│  Cloud Scheduler  (cron "0 3 * * *" Europe/Rome)│
+│         │                                       │
+│         ▼                                       │
+│  Cloud Run Job (backfill-daily)                 │
+│  ARPA Socrata API + Open-Meteo API              │
+│         │                                       │
+│         ▼                                       │
+│  Cloud Storage bucket                           │
+│  gs://exam-project-backfill/data/raw/           │
+│    {date}_measurements.json                     │
+│    {date}_weather.json                          │
+└─────────────────────────────────────────────────┘
+                        │
+                        │ lettura on-demand (7 JSON rolling)
+                        ▼
+              [serving container Cloud Run]
+
+                  === FLUSSO TRAINING (locale, one-shot) ===
+┌─────────────────────────────────────────────────┐
+│  STEP 1 — Raccolta storica (backfill una-tantum)│
+│  Modulo step_1_collection/gcloud_backfill/      │
+│  Output: data/raw/{date}_*.json (storico ≥1 anno)│
 └────────────────────┬────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────┐
-│  STEP 2 — Ingestion ETL                         │
-│  Docker MySQL + ingest.py                       │
-│  Output: tabelle stations, sensors,             │
-│           measurements, weather_hourly          │
-│  Opzionale: industrial_proximity.parquet        │
+│  STEP 2 — Ingestion ETL (solo locale, offline)  │
+│  MySQL come staging + ingest.py                 │
+│  Output: tabelle stations, measurements, ...    │
+│  (MySQL NON viene deployato in produzione)      │
 └────────────────────┬────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────┐
@@ -48,14 +71,132 @@ Raccogliere dati giornalieri sulla qualità dell'aria dalle stazioni ARPA Lombar
 ┌─────────────────────────────────────────────────┐
 │  STEP 4 — Regressione PM10 ✅                   │
 │  ElasticNet + XGBoost + RandomForest            │
-│  Output: artifacts/ (joblib, JSON, plots)       │
+│  Output: artifacts/*.joblib + metrics + plots   │
 └────────────────────┬────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────┐
-│  STEP 5 — Classificazione Allerta (da fare)     │
-│  LogisticRegression + XGBoost + RandomForest    │
-└─────────────────────────────────────────────────┘
+│  STEP 5 — Classificazione Allerta ✅            │
+│  LogisticRegression + RandomForest + XGBoost    │
+│  Output: artifacts/*.joblib + metrics + plots   │
+└────────────────────┬────────────────────────────┘
+                     ↓
+  Artefatti bundled nel Dockerfile
+  (parquet + .joblib) → deploy Cloud Run
 ```
+
+### Allineamento al feedback del docente (Lab 4)
+
+| Richiesta | Implementazione |
+|-----------|-----------------|
+| "Dataset con ≥1 anno di storico" | Backfill ARPA + Open-Meteo dal 2024 via `step_1_collection/gcloud_backfill/` |
+| "Web scraping architecture di Lab 4 su GCP, non MySQL on Docker" | Cloud Scheduler + Cloud Run Job + Cloud Storage. MySQL resta solo locale per training, non viene mai deployato |
+| "FastAPI per backend e frontend" | Singola app FastAPI con `Jinja2Templates` + `StaticFiles` che serve sia REST sia UI (mappa/forecast/history) |
+| "Release su Cloud Run" | `gcloud run deploy pm10-forecast --source .` — un unico container |
+
+---
+
+## 2bis. Riepilogo Funzionamento End-to-End
+
+La pipeline di sezione 2 descrive le trasformazioni dati. Questa sezione spiega come i diversi ambienti (cloud, PC locale, internet) collaborano a runtime e quali interventi manuali sono richiesti.
+
+### I tre ambienti
+
+**1. GCloud — frigorifero dei dati freschi**
+
+Due Cloud Run Job indipendenti pubblicano JSON sul bucket `gs://exam-project-backfill/data/raw/`:
+
+| Job | Modulo | Quando gira | Range | Validazione ARPA |
+|-----|--------|-------------|-------|------------------|
+| `backfill-historical` | `step_1_collection/gcloud_backfill/` | On-demand (scheduler tipicamente in pausa) | Configurabile via env (`BACKFILL_START`/`END`) | Solo `stato='VA'` |
+| `backfill-daily` | `step_1_collection/gcloud_daily/` | Cron `0 3 * * *` Europe/Rome | Finestra rolling `[oggi-7, oggi-1]` | Include preliminari |
+
+Entrambi sono idempotenti (lock GCS separati, skip se i file esistono gia').
+
+**2. PC locale — dove vive il training**
+
+MySQL e' solo uno strumento di **staging offline** per la pipeline di training: non viene mai deployato in produzione e non e' raggiungibile dal container Cloud Run.
+
+| Path | Sorgente | Uso |
+|------|----------|-----|
+| `data/raw/` (locale) | Backfill storico (manuale o `gcloud_backfill`) | Unica fonte di **training**: ingest in MySQL locale, poi parquet |
+| `gs://.../data/raw/` (GCS, 7gg rolling) | `backfill-daily` (GCloud) | Unica fonte di **feature fresche** al serving: lette al volo da Cloud Run |
+
+`step_2_ingestion/ingest.py` legge **solo** `data/raw/` locale: MySQL → `daily_dataset_clean.parquet` → modelli `.joblib`. Parquet e modelli vengono poi bundled nell'immagine Docker che viene deployata su Cloud Run.
+
+Questa separazione garantisce che chiamate utente a cadenza irregolare non creino buchi nello storico di training.
+
+**3. Cloud Run — l'applicazione deployata (FastAPI monolitica)**
+
+Un unico container espone sia la REST API (endpoint JSON) sia l'interfaccia web (HTML via Jinja2). Al suo interno:
+
+- `daily_dataset_clean.parquet` (bundled) serve `/stations`, `/history` e fornisce l'anagrafica statica delle stazioni → **nessuna connessione MySQL**
+- `api/services/recent_data.py` scarica i 7 JSON freschi da GCS per calcolare le lag/rolling al volo (cache 15 min)
+- `artifacts/*.joblib` (bundled) producono le predizioni
+
+### Diagramma del flusso runtime
+
+```
+ARPA + Open-Meteo (internet)
+       |
+       v
+[GCloud daily job, 03:00 Europe/Rome]  -->  GCS bucket (gs://.../data/raw/)
+                                                     |
+                                 +-------------------+-------------------+
+                                 |                                       |
+                    (one-shot, storico locale)              (ogni richiesta utente)
+                                 v                                       |
+                          data/raw/ (PC)                                 |
+                                 |                                       |
+                                 v   ingest.py (solo data/raw/)          |
+                          MySQL (locale)                                 |
+                                 |                                       |
+                                 v   step_3_eda/eda.py                   |
+                      daily_dataset_clean.parquet                        |
+                                 |                                       |
+                                 v (training one-shot)                   |
+                          .joblib + parquet                              |
+                                 |                                       |
+                                 v (bundled in Dockerfile)               |
+                          +---------------------+                        |
+                          |  Cloud Run service  |<-----------------------+
+                          |  (FastAPI monolit)  |    recent_data.py:
+                          |   REST + Jinja2 UI  |    7 JSON da GCS
+                          +---------------------+    (cache 15 min)
+                                 |
+                                 v
+                             Utente (browser / curl)
+```
+
+### Cosa fa ciascun attore
+
+**GCloud (autonomo):** ogni notte scarica i 7 giorni precedenti e li carica su GCS. Non chiama il PC, non sa che esiste.
+
+**PC locale (manuale, solo per training):** l'utente sincronizza `data/raw/` tramite il backfill storico (`gcloud_backfill` o download manuale), fa ingest in MySQL **locale**, rigenera il parquet, riallena i modelli, rebuilda l'immagine Docker.
+
+**Cloud Run service (a runtime):** scarica al volo la finestra 7gg da GCS (cache 15 min), aggrega orario→daily in memoria e calcola le lag/rolling. Il parquet bundled serve sia come anagrafica statica delle stazioni sia come sorgente di `/history` e `/stations`. **Il container non si connette mai a MySQL.**
+
+### Comandi tipici
+
+| Frequenza | Comando | Scopo |
+|-----------|---------|-------|
+| Una volta sola | `bash step_1_collection/gcloud_*/deploy.sh` (×2) | Setup job + scheduler GCloud |
+| Una volta (o per riallenare) | `scripts\run_pipeline.bat` | Training completo dei modelli |
+| Per chiudere gap storici | `gcloud run jobs execute backfill-historical` con range scelto | Riempie `data/raw/` locale |
+| Smoke test end-to-end | `python -m scripts.smoke_test_predict` | Verifica fetch GCS + predict senza MySQL |
+| Deploy produzione | `gcloud run deploy pm10-forecast --source . --region=europe-west1` | Pubblica il container (API + UI) |
+
+### Vincolo di freschezza
+
+Le rolling feature di PM10 (`pm10_roll3`, `pm10_roll7`) richiedono i dati dei 7 giorni precedenti. Il daily job GCloud mantiene quella finestra sempre aggiornata sul bucket, quindi l'API ha sempre dati freschi senza alcuna azione manuale.
+
+### Decisioni architetturali principali
+
+1. **Due job GCloud separati** (storico + daily): ruoli, schedulazioni e lock indipendenti.
+2. **Training e serving separati fisicamente**: training da `data/raw/` locale (frozen, append-only), serving direttamente da GCS a runtime. Nessuna interferenza possibile tra path.
+3. **Nessun ingest del recent in MySQL**: elimina alla radice il rischio che chiamate API sporadiche creino buchi di stagionalita' nello storico.
+4. **Parquet come anagrafica + storico stabile**: `daily_dataset_clean.parquet` serve sia come metadata stazioni sia come sorgente di `/history`. E' lo snapshot congelato su cui e' stato allenato il modello → garanzia di coerenza train/serving. I lag a runtime si calcolano sempre su dati freschi da GCS.
+5. **MySQL solo locale, mai deployato**: e' uno staging di training. Il container Cloud Run non ha client MySQL installato.
+6. **FastAPI monolitica**: backend (REST JSON) e frontend (HTML via Jinja2) vivono nello stesso processo, deployati come singolo container su Cloud Run (coerente con feedback docente e pattern Lab 4).
 
 ---
 
@@ -393,7 +534,7 @@ python -m step_1_collection.backfill \
     --sleep 2
 ```
 
-**Ottimizzazione coordinate:** le coordinate sono arrotondate a 1 decimale (`COORD_ROUND_DP = 1`, ~11 km di precisione). Le ~170 stazioni Lombardia si riducono a ~15-20 celle uniche per Open-Meteo: questo riduce drasticamente le chiamate API rispettando i rate limit, senza diminuire il numero di record finali per stazione. Il compromesso e' una minore risoluzione spaziale delle feature meteo, perche' stazioni vicine condividono la stessa serie Open-Meteo.
+**Ottimizzazione coordinate:** le coordinate sono arrotondate a 1 decimale (`COORD_ROUND_DP = 1`, ~11 km di precisione). Le ~170 stazioni Lombardia si riducono a ~15–20 celle uniche per Open-Meteo → riduce drasticamente le chiamate API rispettando i rate limit.
 
 **Output:** `data/raw/{date}_measurements.json`, `data/raw/{date}_weather.json`, `data/raw/backfill_summary_{start}_{end}.json`.
 
@@ -442,7 +583,7 @@ clean_dataset() → save daily_dataset_clean.parquet
 
 Output `step_3_eda/daily_dataset_clean.parquet`:
 - Granularità: 1 riga per stazione per giorno
-- Periodo: marzo 2025 – marzo 2026 (~13 mesi)
+- Periodo: gennaio 2024 – marzo 2026 
 - ~7.000–10.000 righe (post-pulizia)
 - Colonne: ~65–75 (feature + target + identificatori)
 
@@ -481,10 +622,10 @@ Tutti e tre i modelli usano `TransformedTargetRegressor(func=np.log1p, inverse_f
 **ElasticNet:**
 ```
 ColumnTransformer(StandardScaler su numeriche)
-  -> TransformedTargetRegressor
-      -> ElasticNet(max_iter=2000)
+  → TransformedTargetRegressor
+      → ElasticNet(max_iter=2000)
 ```
-Search: `GridSearchCV`, 6 alpha x 4 l1_ratio = **24 combinazioni** x 5 fold = 120 fit.
+Search: `GridSearchCV` — 6 alpha × 4 l1_ratio = **24 combinazioni** × 5 fold = 120 fit.
 
 ```python
 "regressor__regressor__alpha":    [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
@@ -494,10 +635,10 @@ Search: `GridSearchCV`, 6 alpha x 4 l1_ratio = **24 combinazioni** x 5 fold = 12
 **XGBoost:**
 ```
 ColumnTransformer(passthrough su numeriche)
-  -> TransformedTargetRegressor
-      -> XGBRegressor(tree_method="hist")
+  → TransformedTargetRegressor
+      → XGBRegressor(tree_method="hist")
 ```
-Search: `RandomizedSearchCV(n_iter=50)`, spazio 4 x 4 x 3 x 3 x 3 x 3 = 1.296 combinazioni; `n_iter=50` copre circa il 3.9% del grid. 250 fit totali.
+Search: `RandomizedSearchCV(n_iter=50)` — spazio 4×4×3×3×3×3 = 1.296 combinazioni; n_iter=50 ≈ 3.9% del grid. 250 fit totali.
 
 ```python
 "n_estimators":    [100, 300, 500, 800]
@@ -511,10 +652,10 @@ Search: `RandomizedSearchCV(n_iter=50)`, spazio 4 x 4 x 3 x 3 x 3 x 3 = 1.296 co
 **RandomForest:**
 ```
 ColumnTransformer(passthrough su numeriche)
-  -> TransformedTargetRegressor
-      -> RandomForestRegressor
+  → TransformedTargetRegressor
+      → RandomForestRegressor
 ```
-Search: `RandomizedSearchCV(n_iter=50)`, spazio 3 x 3 x 3 = 27 combinazioni. Con 250 fit totali la ricerca ricampiona piu' volte il piccolo spazio disponibile.
+Search: `RandomizedSearchCV(n_iter=50)` — spazio 3×3×3 = 27 combinazioni (over-sampled, equivale a ~1.85× il grid completo). 250 fit totali.
 
 ```python
 "n_estimators":    [100, 300, 500]
@@ -522,9 +663,9 @@ Search: `RandomizedSearchCV(n_iter=50)`, spazio 3 x 3 x 3 = 27 combinazioni. Con
 "min_samples_leaf":[2, 5, 10]
 ```
 
-**Motivazione GridSearch per ElasticNet vs RandomizedSearch per gli alberi:** ElasticNet ha uno spazio piccolo (24 combinazioni), quindi il grid completo e' computazionalmente conveniente. XGBoost e RandomForest hanno spazi molto piu' ampi; in questi casi `RandomizedSearchCV` offre un buon compromesso tra costo di calcolo e qualita' della soluzione.
+**Motivazione GridSearch per ElasticNet vs RandomizedSearch per gli alberi:** ElasticNet ha uno spazio piccolo (24 combinazioni) e il grid completo è computazionalmente conveniente; XGBoost e RandomForest hanno spazi molto più grandi e RandomizedSearch con n_iter=50 cattura il 90% della qualità con frazione del costo.
 
-**Motivazione StandardScaler solo per ElasticNet:** i modelli ad albero sono sostanzialmente invarianti alla scala delle feature, perche' apprendono soglie e non distanze. Applicare `StandardScaler` agli alberi aggiunge costo senza benefici misurabili. ElasticNet, invece, e' sensibile alla scala perche' la penalizzazione L1/L2 agisce direttamente sui coefficienti.
+**Motivazione StandardScaler solo per ElasticNet:** i modelli ad albero sono invarianti alla scala delle feature (le soglie vengono trovate indipendentemente dal range). StandardScaler su alberi spreca cicli e non migliora le metriche. ElasticNet invece è sensibile alla scala perché la penalizzazione L1/L2 tratta tutte le feature simmetricamente.
 
 ### 11.3 Risultati sul Test Set (70/30 split temporale, 15.544 campioni)
 
@@ -547,27 +688,27 @@ Search: `RandomizedSearchCV(n_iter=50)`, spazio 3 x 3 x 3 = 27 combinazioni. Con
 
 ### 11.4 Analisi dei Risultati e Limiti
 
-**Perche' R² ~0.72 con RMSE ~9 µg/m³?**
+**Perché R² ~0.72 con RMSE ~9 µg/m³?**
 
-Le feature meteorologiche e temporali disponibili spiegano una quota consistente della variabilita' giornaliera del PM10, soprattutto quando il modello puo' apprendere relazioni non lineari, soglie e interazioni tra ristagno atmosferico, stagionalita' e proxy emissivi. XGBoost beneficia in particolare della capacita' di modellare pattern complessi e della logica boosting, che corregge progressivamente gli errori residui.
+Le feature meteorologiche e temporali disponibili riescono a spiegare una quota consistente della variabilità giornaliera del PM10, soprattutto quando il modello può apprendere relazioni non lineari, soglie e interazioni tra ristagno atmosferico, stagionalità e proxy emissivi. In particolare, XGBoost beneficia della maggiore capacità di modellare pattern complessi rispetto a ElasticNet e della natura boosting, che corregge progressivamente gli errori residui.
 
-Le feature `giorno_settimana`, `stagione` e `heating_season` catturano lo **shift della media attesa** tra categorie, mentre le variabili meteo descrivono i meccanismi di accumulo o dispersione. Per esempio:
+Le feature `giorno_settimana`, `stagione` e `heating_season` catturano lo **shift della media attesa** tra categorie (un lunedì di gennaio ha PM10 mediamente più alto di una domenica di agosto), mentre le variabili meteo descrivono i meccanismi di accumulo o dispersione:
 
-- Giorno invernale con vento debole e BLH bassa -> accumulo di PM10
-- Giorno piovoso o ventilato -> dispersione/deposizione e concentrazioni piu' basse
+- Giorno invernale con vento debole e BLH bassa → accumulo di PM10
+- Giorno piovoso o ventilato → dispersione / deposizione e concentrazioni più basse
 
 | Driver varianza | Catturabile con questo dataset? |
 |-----------------|--------------------------------|
-| Vento / BLH (dispersione) | Si', gia' nel dataset |
-| Pioggia (wet deposition) | Si', gia' nel dataset |
-| Inversione termica | Parziale, con BLH come proxy |
-| Trasporto transfrontaliero (polvere sahariana, incendi) | No, richiederebbe HYSPLIT o satellite AOD |
-| Traffico reale (eventi, neve, scioperi) | No, `is_weekend` e' solo un proxy statistico |
+| Vento / BLH (dispersione) | ✅ già nel dataset |
+| Pioggia (wet deposition) | ✅ già nel dataset |
+| Inversione termica | ⚠️ parziale (BLH come proxy) |
+| Trasporto transfrontaliero (polvere sahariana, incendi) | ❌ richiederebbe HYSPLIT o satellite AOD |
+| Traffico reale (eventi, neve, scioperi) | ❌ `is_weekend` è proxy statistico |
 
-**Conclusione:** R² ~0.72 indica che il dataset contiene un segnale predittivo forte, ma resta comunque una quota non spiegata (~28%) legata a fattori episodici o non osservati. Il modello e' quindi utile per previsione operativa e analisi comparativa, ma non esaurisce tutta la dinamica fisica del fenomeno.
+**Conclusione:** R² ~0.72 indica che il dataset contiene un segnale predittivo forte, ma resta comunque una quota non spiegata (~28%) legata a fattori episodici o non osservati. Il modello è quindi utile per previsione operativa e analisi comparativa, ma non esaurisce tutta la dinamica fisica del fenomeno.
 
-**Perche' ElasticNet resta inferiore (R² = 0.351)?**  
-La relazione PM10 <-> meteo e' intrinsecamente non lineare, con soglie, interazioni ed effetti stagionali asimmetrici. ElasticNet impone una struttura lineare globale e, pur beneficiando della trasformazione `log1p`, non rappresenta bene ne' i picchi ne' i cambi di regime. Il risultato e' un modello piu' stabile rispetto alla versione iniziale, ma ancora nettamente peggiore dei modelli ad albero sia in RMSE complessivo sia nella fascia rossa (29.56 µg/m³ contro 17.36 di XGBoost).
+**Perché ElasticNet resta basso (R² = 0.351)?**  
+La relazione PM10 ↔ meteo è intrinsecamente non lineare (soglie, interazioni, effetti stagionali asimmetrici). ElasticNet impone una struttura lineare globale e, pur beneficiando della trasformazione `log1p`, non riesce a rappresentare bene i picchi e i cambi di regime. Il risultato è un modello nettamente peggiore dei modelli ad albero sia in RMSE complessivo sia nella fascia rossa (29.56 µg/m³ contro 17.36 di XGBoost).
 
 ---
 
@@ -620,29 +761,59 @@ StandardScaler → LogisticRegression(penalty='elasticnet', solver='saga', class
 - `severe_error_rate`: percentuale di errori con distanza ≥ 2 tra classe vera e predetta
 - Permutation importance su test set (best model)
 
-### 12.5 Calibrazione delle Probabilità (opzionale)
+### 12.5 Risultati sul Test Set (70/30 split temporale, 15.544 campioni)
+
+| Modello | F1-macro | severe\_error\_rate |
+|---------|----------|---------------------|
+| Logistic Regression | 0.629 | 2.86% |
+| Random Forest | 0.639 | 2.11% |
+| **XGBoost** | **0.641** | **2.37%** |
+
+**Best model:** `XGBoost` (salvato in `artifacts/best_model.joblib`).
+
+**Note sui risultati:**
+- Margine minimo tra XGBoost e Random Forest (F1-macro: 0.641 vs 0.639) — il vantaggio non è netto
+- Gli errori sono concentrati tra classi adiacenti (verde/giallo, giallo/arancio), coerente con la natura ordinale del target
+- Feature dominante: `pm10_roll7`, seguono `o3_mean`, `pressure_mean`, `provincia`
+- La pipeline `XGBoost regressione → soglie classi` produce come baseline F1-macro ~0.643 e severe\_error\_rate ~1.6%, risultando competitiva con la classificazione separata
+
+### 12.6 Calibrazione delle Probabilità (opzionale)
 
 `CalibratedClassifierCV(method='isotonic')` sul miglior modello post-tuning.  
-**Motivazione:** per un sistema di allerta pubblica, "73% probabilità di Rosso" è più utile di un semplice label. Il metodo `isotonic` (regressione isotonica non-parametrica) ottiene un macro-ECE inferiore rispetto a `sigmoid` (Platt scaling), che tendeva a peggiorare la calibrazione delle classi intermedie (giallo) già ben calibrate dal modello XGBoost.
+**Motivazione:** per un sistema di allerta pubblica, "73% probabilità di Rosso" è più utile di un semplice label. Il metodo `isotonic` è preferito a `sigmoid` perché la regressione isotonica non assume una forma funzionale fissa e si adatta meglio a distribuzioni di confidence non monotone, frequenti nei modelli boosted multi-classe.
 
 ---
 
-## 13. Step 6 — Webapp & REST API
+## 13. Step 6 — FastAPI monolitica (API + Frontend)
 
 ### 13.1 Architettura
 
 ```
-┌──────────────────────────────────────────────────┐
-│  STEP 6 — Webapp & REST API                      │
-│                                                  │
-│  FastAPI  →  REST API  (porta 8000)              │
-│  Streamlit →  Web UI   (porta 8501)              │
-│                                                  │
-│  Streamlit chiama FastAPI internamente           │
-└──────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────┐
+│  STEP 6 — FastAPI (singolo processo, porta 8080)  │
+│                                                   │
+│   ┌─────────────────────┐  ┌──────────────────┐  │
+│   │  REST API (JSON)    │  │  Frontend (HTML) │  │
+│   │  /health /stations  │  │  /  /forecast-ui │  │
+│   │  /forecast /history │  │  /history-ui     │  │
+│   │  /docs (Swagger)    │  │  (Jinja2 + CSS)  │  │
+│   └──────────┬──────────┘  └────────┬─────────┘  │
+│              │                      │             │
+│              └──────────┬───────────┘             │
+│                         │                         │
+│                ┌────────▼─────────┐               │
+│                │  services/       │               │
+│                │  - predictor.py  │               │
+│                │  - recent_data   │──► GCS 7gg    │
+│                │  - history.py    │──► parquet    │
+│                │  - weather.py    │──► Open-Meteo │
+│                └──────────────────┘               │
+└───────────────────────────────────────────────────┘
 ```
 
-Streamlit non espone logica di predizione direttamente: chiama gli endpoint FastAPI via `httpx` (o `requests`). Questo mantiene la separazione API / UI e consente di usare la REST API in modo indipendente.
+Un'unica app FastAPI serve sia gli endpoint JSON (per uso programmatico / Swagger / curl) sia le pagine HTML (per l'utente finale) tramite `Jinja2Templates` + `StaticFiles`. Deployata come singolo container su Cloud Run, senza dipendenze da MySQL in produzione.
+
+Scelta coerente con il feedback del docente ("use FastAPI to deliver both backend and frontend") e con il pattern Lab 4 (un solo `gcloud run deploy` su codice sorgente).
 
 ---
 
@@ -652,25 +823,36 @@ Struttura directory:
 
 ```
 api/
-├── main.py          # app FastAPI, startup, router include
+├── main.py              # app FastAPI, startup, lifespan, mount static/templates
+├── config.py            # env vars (GCS_BUCKET, ARTIFACTS_DIR, PARQUET_PATH)
 ├── routers/
-│   ├── stations.py  # GET /stations
-│   ├── forecast.py  # GET /forecast
-│   └── history.py   # GET /history
+│   ├── stations.py      # GET /stations (JSON)
+│   ├── forecast.py      # GET /forecast (JSON)
+│   ├── history.py       # GET /history (JSON)
+│   └── ui.py            # GET /, /forecast-ui, /history-ui (HTML)
 ├── services/
-│   ├── predictor.py # carica modelli .joblib, build_features, predict
-│   └── weather.py   # fetch Open-Meteo forecast
-└── schemas.py       # Pydantic response models
+│   ├── predictor.py     # carica modelli .joblib, build_features, predict
+│   ├── recent_data.py   # fetch 7gg da GCS + aggregazione orario→daily
+│   ├── history.py       # filtro parquet per /history e /stations
+│   └── weather.py       # fetch Open-Meteo forecast per day+1/+2
+├── templates/           # Jinja2: base.html, map.html, forecast.html, history.html
+├── static/              # CSS + JS minimali
+└── schemas.py           # Pydantic response models
 ```
 
 #### Endpoint
 
-| Metodo | Path | Descrizione |
-|--------|------|-------------|
-| `GET` | `/health` | Liveness check — `{"status": "ok"}` |
-| `GET` | `/stations` | Lista stazioni con id, nome, comune, lat, lon |
-| `GET` | `/forecast` | Previsione PM10 + classe allerta per stazione e orizzonte 1-2 gg |
-| `GET` | `/history` | Misurazioni storiche PM10 per stazione e intervallo date |
+| Metodo | Path | Tipo | Descrizione |
+|--------|------|------|-------------|
+| `GET` | `/health` | JSON | Liveness check — `{"status": "ok"}` |
+| `GET` | `/stations` | JSON | Lista stazioni con id, nome, comune, lat, lon |
+| `GET` | `/forecast` | JSON | Previsione PM10 + classe allerta per stazione e orizzonte 1-2 gg |
+| `GET` | `/history` | JSON | Misurazioni storiche PM10 per stazione e intervallo date |
+| `GET` | `/` | HTML | Mappa Lombardia con allerte previste (home page) |
+| `GET` `POST` | `/forecast-ui` | HTML | Form + risultato previsione per singola stazione |
+| `GET` `POST` | `/history-ui` | HTML | Form + grafico serie storica PM10 |
+| `GET` | `/docs` | HTML | Swagger UI generata da FastAPI |
+| `GET` | `/static/*` | asset | CSS/JS/immagini |
 
 #### `GET /stations`
 
@@ -687,7 +869,7 @@ api/
 ]
 ```
 
-Fonte: query sulla tabella `stations` di MySQL.
+**Fonte:** `api/services/history.py` → raggruppa il `daily_dataset_clean.parquet` per `idstazione` e restituisce lat/lng/nome/comune. **Nessuna query MySQL a runtime.** Il parquet e' caricato una sola volta al startup (vedi `lifespan` in `api/main.py`) e riusato in memoria.
 
 #### `GET /forecast?station_id=501&days=1`
 
@@ -718,26 +900,32 @@ Parametri:
 **Flusso interno `predictor.py`:**
 
 ```
-1. Recupera le ultime N righe storiche della stazione da MySQL
-   (servono per: pm10_lag1, pm10_lag7, pm10_rolling7)
+1. recent_data.fetch_recent_for_station(station_id)
+   → scarica i 7 JSON piu' recenti da gs://exam-project-backfill/data/raw/
+   → aggrega orario→daily in memoria (stesse regole di step_3_eda/db.py)
+   → cache TTL 15 min
+   (servono per: pm10_lag1, pm10_lag7, pm10_roll3, pm10_roll7)
 
-2. Fetch previsioni meteo da Open-Meteo Forecast API
-   per lat/lon della stazione, orizzonte = days
-   (stesso endpoint usato in step_1_collection, ma con ?forecast=True)
+2. weather.fetch_forecast_weather(lat, lng, days)
+   → chiamata Open-Meteo Forecast API, orizzonte = days
+   → aggregazione daily (stessi campi usati in training)
 
 3. Costruisce X_future con le stesse feature usate in training:
    - feature meteo: da Open-Meteo forecast
-   - lag1:         ultimo pm10 noto da DB
-   - lag7:         pm10 di 7 giorni fa da DB
-   - rolling7:     media ultimi 7 giorni da DB
+   - lag1/lag2:    ultimi pm10 noti dalla finestra 7gg GCS
+   - roll3/roll7:  media dei 3/7 giorni precedenti dalla stessa finestra GCS
    - feature temporali: day_sin/cos, month_sin/cos, stagione
-   - feature spaziali:  dist_industrial, n_industrial_500m (statiche per stazione)
+   - feature spaziali:  dist_industrial, n_industrial_500m (dal parquet)
 
-4. model_regression.predict(X_future)   → pm10 float
-   model_classification.predict(X_future) → classe allerta int → label
+4. model_regression.predict(X_future)       → pm10 float
+   model_classification.predict(X_future)   → classe allerta int → label
 
 5. Ritorna JSON
 ```
+
+**Vincolo di freschezza dei dati storici:**
+
+Le lag/rolling feature di PM10 (in particolare `pm10_roll3` e `pm10_roll7`, fra le piu' importanti in feature importance) richiedono i dati osservati dei 7 giorni immediatamente precedenti alla data di predizione. Questi dati sono letti da `api/services/recent_data.py` direttamente dal bucket GCS ad ogni richiesta (cache in memoria 15 min), quindi la freschezza dipende esclusivamente dal daily job GCloud (`0 3 * * *` Europe/Rome) che mantiene aggiornata la finestra `[today-7, today-1]`. Nessun passaggio manuale e' richiesto prima di una demo.
 
 **Limite orizzonte 1-2 giorni:**
 - Giorno +1: tutte le lag features calcolate su dati reali → predizione affidabile
@@ -756,172 +944,188 @@ Parametri:
 }
 ```
 
-Fonte: query su MySQL (tabella `measurements`) oppure `daily_dataset.parquet`.
+**Fonte:** `api/services/history.py` → filtra in-memory il `daily_dataset_clean.parquet` per `idstazione` e range `[from_date, to_date]`. Calcola al volo `alert_class` dalle soglie PM10. **Nessuna query MySQL a runtime.**
+
+Vantaggi di servire `/history` dal parquet invece che rileggere i JSON grezzi da GCS:
+- **Latenza:** filtro pandas in RAM (millisecondi) vs download+parse di centinaia di JSON orari
+- **Coerenza train/serving:** i dati mostrati sono **esattamente** quelli su cui e' stato allenato il modello
+- **Nessun egress GCS** per ogni richiesta utente
+- **Indipendenza:** se il bucket GCS non risponde, `/history` e `/stations` continuano a funzionare
+
+Trade-off accettato: per aggiornare lo storico mostrato occorre rigenerare il parquet e rideployare il container. E' coerente col ciclo di vita dell'applicazione (si aggiorna il modello ~ogni settimana/mese, non in tempo reale).
 
 ---
 
-### 13.3 Web Interface — Streamlit (`webapp/`)
+### 13.3 Web Interface — Jinja2 templates (`api/templates/`)
 
-Struttura directory:
+Il frontend e' servito **dalla stessa app FastAPI** tramite `Jinja2Templates` + `StaticFiles`. Non c'e' un servizio Streamlit separato: un solo container, un solo processo, un solo deploy su Cloud Run.
+
+**Configurazione in `api/main.py`:**
+
+```python
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+app.mount("/static", StaticFiles(directory="api/static"), name="static")
+templates = Jinja2Templates(directory="api/templates")
+```
+
+**Struttura:**
 
 ```
-webapp/
-├── app.py           # entry point Streamlit, navigazione pagine
-├── pages/
-│   ├── 1_map.py     # Mappa Lombardia con allerte
-│   ├── 2_forecast.py # Previsione per stazione selezionata
-│   └── 3_history.py  # Serie storica PM10
-└── utils/
-    └── api_client.py # Wrapper httpx per chiamare FastAPI
+api/
+├── routers/
+│   └── ui.py              # Route HTML: /, /forecast-ui, /history-ui
+├── templates/
+│   ├── base.html          # Layout comune (Bootstrap CDN, navbar)
+│   ├── map.html           # Home — mappa Lombardia con allerte
+│   ├── forecast.html      # Form + risultato previsione
+│   └── history.html       # Form + grafico storico
+└── static/
+    ├── css/style.css
+    └── js/ (facoltativo)
 ```
 
-#### Pagina 1 — Mappa allerte
+#### Pagina 1 — Mappa allerte (`GET /`)
 
-- Mappa Lombardia con `folium` (o `pydeck`) integrata in Streamlit via `st.components`
-- Marker per ogni stazione, colorato in base all'allerta prevista per domani:
-  - Verde / Giallo / Arancio / Rosso
-- Click su marker → popup con nome stazione, comune, PM10 previsto
-- Pulsante "Aggiorna previsioni" → chiama `GET /forecast` per tutte le stazioni
+- Server-side il router carica tutte le stazioni via `history.get_stations()` (dal parquet) e per ciascuna chiama `predictor.predict(station_id, days=1)` (cache 15 min sui risultati)
+- Genera una mappa Folium in-process (`folium.Map().get_root().render()`) con marker colorati per classe allerta
+- Passa l'HTML generato al template `map.html` che lo embedda via `{{ map_html | safe }}`
+- Popup marker: nome stazione, comune, PM10 previsto, classe allerta
 
-#### Pagina 2 — Previsione stazione
+#### Pagina 2 — Previsione stazione (`GET`/`POST /forecast-ui`)
 
-- Dropdown: seleziona stazione
-- Slider: orizzonte 1 o 2 giorni
-- Output:
-  - Valore PM10 previsto (numero + badge colorato classe allerta)
+- Form Bootstrap con dropdown stazioni (popolato server-side dal parquet) e radio button orizzonte 1 o 2 giorni
+- Submit → chiama internamente `predictor.predict(station_id, days)` e renderizza risultato:
+  - Valore PM10 previsto (numero grande + badge colorato classe allerta)
   - Tabella feature meteo usate (temperatura, vento, BLH)
-  - Nota disclaimer: "Previsione basata su modello ML + dati meteo Open-Meteo. Orizzonte 2 giorni: la lag feature del giorno 2 è stimata."
+  - Disclaimer: "Previsione basata su modello ML + dati meteo Open-Meteo. Orizzonte 2 giorni: la lag feature del giorno 2 e' stimata dal giorno +1."
 
-#### Pagina 3 — Serie storica
+#### Pagina 3 — Serie storica (`GET`/`POST /history-ui`)
 
-- Dropdown: seleziona stazione
-- Date picker: intervallo
-- Grafico lineare PM10 nel tempo (`st.line_chart` o `plotly`)
-- Bande orizzontali colorate per soglie allerta (verde/giallo/arancio/rosso)
+- Form con dropdown stazione + date picker `from`/`to` (default: ultimi 30 giorni)
+- Submit → chiama `history.get_history(station_id, from_date, to_date)` (dal parquet)
+- Grafico Plotly inline generato server-side (`plotly.graph_objects.Figure().to_html(include_plotlyjs="cdn")`) con bande orizzontali colorate per soglie allerta (verde <20, giallo <35, arancio <50, rosso ≥50)
+- Embedded nel template via `{{ chart_html | safe }}`
+
+**Perche' non Streamlit:**
+1. Il docente ha chiesto esplicitamente "FastAPI to deliver both backend and frontend"
+2. Un singolo container → un singolo `gcloud run deploy`, zero ambiguita' sulla networking tra servizi
+3. Coerenza col pattern Lab 4 (app Flask/FastAPI con Jinja templates, tutto in un unico `gcloud run deploy`)
+4. Meno dipendenze runtime (no processo Streamlit da gestire)
 
 ---
 
-## 14. Docker & Deploy
+## 14. Docker & Deploy su Cloud Run
 
-### 14.1 Struttura Docker
+Deploy di produzione: singolo container su **Google Cloud Run**, seguendo il pattern Lab 4. Il `docker compose` della root del progetto e' deprecato per la produzione; `step_2_ingestion/compose.yaml` sopravvive SOLO come strumento di sviluppo locale per far girare il MySQL di training.
+
+### 14.1 Struttura
 
 ```
 exam_project/
-├── Dockerfile.api         # FastAPI backend
-├── Dockerfile.webapp      # Streamlit frontend
-└── compose.yaml           # Orchestrazione completa (sovrascrive step_2_ingestion/compose.yaml)
+├── Dockerfile                     # Unico Dockerfile per API + UI (porta 8080)
+├── .gcloudignore                  # Esclude data/, artifacts intermedi, __pycache__
+└── step_2_ingestion/compose.yaml  # Solo dev locale (MySQL training staging)
 ```
 
-**`compose.yaml` (root — unificato):**
-
-```yaml
-services:
-
-  mysql:
-    image: mysql:8.0
-    container_name: exam_mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpass
-      MYSQL_DATABASE: airquality
-      MYSQL_USER: airuser
-      MYSQL_PASSWORD: airpass
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./step_2_ingestion/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    container_name: exam_api
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_NAME: airquality
-      DB_USER: airuser
-      DB_PASS: airpass
-    depends_on:
-      mysql:
-        condition: service_healthy
-    volumes:
-      - ./step_4_regression/artifacts:/app/step_4_regression/artifacts:ro
-      - ./step_5_classification/artifacts:/app/step_5_classification/artifacts:ro
-      - ./data:/app/data:ro
-
-  webapp:
-    build:
-      context: .
-      dockerfile: Dockerfile.webapp
-    container_name: exam_webapp
-    restart: unless-stopped
-    ports:
-      - "8501:8501"
-    environment:
-      API_BASE_URL: http://api:8000
-    depends_on:
-      - api
-
-volumes:
-  mysql_data:
-```
-
-**`Dockerfile.api`:**
+**`Dockerfile` (root, pattern Lab 4 slide 6):**
 
 ```dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
 
+# Dipendenze
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
+# Codice applicativo
 COPY api/ ./api/
 COPY shared/ ./shared/
 COPY step_4_regression/ ./step_4_regression/
 COPY step_5_classification/ ./step_5_classification/
 
-EXPOSE 8000
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Artefatti bundled: parquet + modelli .joblib
+COPY artifacts/ ./artifacts/
+
+# Cloud Run inietta $PORT (default 8080)
+ENV PORT=8080
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT}"]
 ```
 
-**`Dockerfile.webapp`:**
+**Note sul Dockerfile:**
+- Niente client MySQL installato → conferma che il container non parla con MySQL
+- `artifacts/` contiene `daily_dataset_clean.parquet` + `*.joblib` (regressione e classificazione) → il container e' self-contained per storico e predizioni
+- Il bucket GCS e' letto con le credenziali del service account Cloud Run (nessun file JSON di credenziali nel container)
 
-```dockerfile
-FROM python:3.11-slim
+**Configurazione via env vars:**
 
-WORKDIR /app
+| Env var | Default | Scopo |
+|---------|---------|-------|
+| `GCS_BUCKET` | `exam-project-backfill` | Bucket da cui leggere i 7gg freschi |
+| `ARTIFACTS_DIR` | `/app/artifacts` | Path dei `.joblib` |
+| `PARQUET_PATH` | `/app/artifacts/daily_dataset_clean.parquet` | Storico stazioni |
+| `RECENT_CACHE_TTL` | `900` (15 min) | TTL cache finestra 7gg |
+| `PORT` | `8080` | Iniettato da Cloud Run |
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+**Service account Cloud Run:**
 
-COPY webapp/ ./webapp/
+Serve il ruolo `roles/storage.objectViewer` sul bucket per permettere il fetch dei JSON freschi:
 
-EXPOSE 8501
-CMD ["streamlit", "run", "webapp/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+```bash
+gcloud storage buckets add-iam-policy-binding gs://exam-project-backfill \
+  --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" \
+  --role="roles/storage.objectViewer"
 ```
 
 ### 14.2 Comandi
 
+**Deploy Cloud Run (produzione):**
+
 ```bash
-# Build e avvio completo
-docker compose up --build
+gcloud run deploy pm10-forecast \
+  --source . \
+  --region=europe-west1 \
+  --max-instances=2 \
+  --memory=1Gi \
+  --allow-unauthenticated \
+  --set-env-vars GCS_BUCKET=exam-project-backfill
+```
 
-# Solo API in sviluppo locale
-uvicorn api.main:app --reload --port 8000
+Output atteso:
+```
+Service URL: https://pm10-forecast-<hash>-ew.a.run.app
+```
 
-# Solo Streamlit in sviluppo locale
-streamlit run webapp/app.py
+**Verifica post-deploy:**
+
+```bash
+curl https://pm10-forecast-<hash>-ew.a.run.app/health
+# {"status":"ok"}
+
+# UI: aprire https://pm10-forecast-<hash>-ew.a.run.app/ in browser
+# Swagger: https://pm10-forecast-<hash>-ew.a.run.app/docs
+```
+
+**Sviluppo locale (senza Docker):**
+
+```bash
+uvicorn api.main:app --reload --port 8080
+# API + UI su http://localhost:8080
+```
+
+**Sviluppo locale (con MySQL per rigenerare il parquet):**
+
+```bash
+# MySQL solo per la pipeline di training
+docker compose -f step_2_ingestion/compose.yaml up -d
+python -m step_2_ingestion.ingest
+python -m step_3_eda.build_dataset
+python -m step_4_regression.train
+python -m step_5_classification.train
+# Poi rebuild immagine e rideploy con `gcloud run deploy`
 ```
 
 ---
@@ -959,14 +1163,14 @@ jobs:
         run: pytest tests/ -v
 ```
 
-### 15.2 Workflow Docker — `docker-publish.yml`
+### 15.2 Workflow Cloud Run — `deploy-cloudrun.yml`
 
 Trigger: push su `master` / tag `v*.*.*`.  
-Pubblica le immagini su GitHub Container Registry (GHCR).
+Effettua `gcloud run deploy --source .` verso il servizio di produzione.
 
 ```yaml
-# .github/workflows/docker-publish.yml
-name: Docker Publish
+# .github/workflows/deploy-cloudrun.yml
+name: Deploy to Cloud Run
 
 on:
   push:
@@ -974,38 +1178,36 @@ on:
     tags: ["v*.*.*"]
 
 jobs:
-  build-and-push:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write   # per Workload Identity Federation
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.DEPLOY_SA }}
 
-      - name: Build and push API image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.api
-          push: true
-          tags: ghcr.io/${{ github.repository }}/api:latest
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build and push Webapp image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.webapp
-          push: true
-          tags: ghcr.io/${{ github.repository }}/webapp:latest
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy pm10-forecast \
+            --source . \
+            --region=europe-west1 \
+            --max-instances=2 \
+            --memory=1Gi \
+            --allow-unauthenticated \
+            --set-env-vars GCS_BUCKET=exam-project-backfill
 ```
+
+**Nota:** il workflow usa Workload Identity Federation (WIF) invece di una service account key file nei GitHub Secrets — pratica raccomandata da Google per evitare credenziali long-lived.
 
 ---
 
@@ -1055,18 +1257,23 @@ Short description (2-3 righe): cosa fa il progetto, quali dati usa, cosa predice
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
 - Python 3.11+
+- Google Cloud SDK (`gcloud`) configurato con un progetto attivo
+- Docker & Docker Compose (solo per sviluppo locale del training pipeline)
 
-### Run with Docker
-docker compose up --build
-# API:     http://localhost:8000/docs
-# Webapp:  http://localhost:8501
+### Try the deployed app
+Il servizio e' deployato su Cloud Run:
+- UI:      https://pm10-forecast-<hash>-ew.a.run.app/
+- Swagger: https://pm10-forecast-<hash>-ew.a.run.app/docs
 
 ### Run locally (development)
 pip install -r requirements.txt
-# 1. Start MySQL
-docker compose up mysql -d
+uvicorn api.main:app --reload --port 8080
+# API + UI su http://localhost:8080
+
+### Retrain the models (richiede MySQL locale)
+# 1. Start MySQL (solo staging di training)
+docker compose -f step_2_ingestion/compose.yaml up -d
 # 2. Run ingestion
 python -m step_2_ingestion.ingest
 # 3. Build dataset
@@ -1077,12 +1284,11 @@ python -m step_4_regression.evaluate
 # 5. Train classification
 python -m step_5_classification.train
 python -m step_5_classification.evaluate
-# 6. Start API + webapp
-uvicorn api.main:app --reload
-streamlit run webapp/app.py
+# 6. Rebuild & redeploy container
+gcloud run deploy pm10-forecast --source . --region=europe-west1 --allow-unauthenticated
 
 ## API Reference
-Tabella endpoint principali + link a http://localhost:8000/docs
+Tabella endpoint principali + link a /docs (Swagger UI)
 
 ## Data Sources
 - ARPA Lombardia Socrata API
@@ -1101,15 +1307,16 @@ Tabella breve: modello, task, metrica, score ottenuto
 
 | Step | Descrizione | Stato |
 |------|-------------|-------|
-| Step 1 | Raccolta dati — `backfill.py` storico 1 anno | ✅ Completato |
-| Step 2 | Ingestion — MySQL, schema, ingest.py | ✅ Completato |
+| Step 1 | Raccolta dati — backfill storico ≥1 anno + Cloud Run Jobs (daily + historical) | ✅ Completato |
+| Step 2 | Ingestion — MySQL locale (solo staging training), schema, ingest.py | ✅ Completato |
 | Step 3 | Feature engineering, EDA, `daily_dataset_clean.parquet` | ✅ Completato |
 | Step 4 | Regressione — 3 modelli trainati, metriche salvate | ✅ Completato |
-| Step 5 | Classificazione — 3 modelli | 🔲 Da fare |
-| Step 6 | REST API — FastAPI `api/` | 🔲 Da fare |
-| Step 6 | Web Interface — Streamlit `webapp/` | 🔲 Da fare |
-| Docker | `Dockerfile.api`, `Dockerfile.webapp`, `compose.yaml` root | 🔲 Da fare |
-| CI/CD | `.github/workflows/test.yml` + `docker-publish.yml` | 🔲 Da fare |
+| Step 5 | Classificazione — 3 modelli trainati + calibrazione isotonica | ✅ Completato |
+| Step 6 | REST API — FastAPI `api/` (endpoint JSON) | ✅ Completato |
+| Step 7 | Frontend Jinja2 integrato in FastAPI (mappa, forecast, history) | 🔲 Da fare |
+| Step 7.1 | Rimozione dipendenza MySQL dal container runtime (`/stations`, `/history` da parquet) | 🔲 Da fare |
+| Step 8 | Singolo `Dockerfile` + deploy Cloud Run (`gcloud run deploy`) | 🔲 Da fare |
+| CI/CD | `.github/workflows/test.yml` + `deploy-cloudrun.yml` | 🔲 Da fare |
 | Docs | `summary.ipynb`, `README.md` | 🔲 Da fare |
 
 

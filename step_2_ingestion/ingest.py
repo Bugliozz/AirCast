@@ -38,6 +38,18 @@ MYSQL_USER     = os.getenv("MYSQL_USER",     "airuser")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "airpass")
 
 RAW_DIR = Path(__file__).parent.parent / "data" / "raw"
+DATA_DIRS = [RAW_DIR]
+
+
+def _glob_data_files(pattern: str) -> list[Path]:
+    """Collect ``pattern`` files from the training archive only.
+
+    Only ``data/raw/`` is ingested into MySQL — it is the immutable historical
+    source of truth for training.  The rolling 7-day window served to the API
+    lives ephemerally on GCS and is read on demand by
+    ``api.services.recent_data``; it must not pollute the training store.
+    """
+    return sorted(RAW_DIR.glob(pattern)) if RAW_DIR.exists() else []
 
 ARPA_SENSORS_URL = "https://www.dati.lombardia.it/resource/ib47-atvt.json"
 ARPA_PAGE_SIZE   = 50_000
@@ -216,9 +228,9 @@ def upsert_sensors(conn: pymysql.Connection, sensors_df: pd.DataFrame) -> int:
 
 def ingest_measurements(conn: pymysql.Connection) -> int:
     """Insert all *_measurements.json files into `measurements`. Idempotent."""
-    files = sorted(RAW_DIR.glob("*_measurements.json"))
+    files = _glob_data_files("*_measurements.json")
     if not files:
-        log.warning("No measurement files found in %s", RAW_DIR)
+        log.warning("No measurement files found in %s", DATA_DIRS)
         return 0
 
     total = 0
@@ -265,9 +277,9 @@ WEATHER_VARS = [
 
 def ingest_weather(conn: pymysql.Connection) -> int:
     """Flatten hourly weather JSON and insert into `weather_hourly`. Idempotent."""
-    files = sorted(RAW_DIR.glob("*_weather.json"))
+    files = _glob_data_files("*_weather.json")
     if not files:
-        log.warning("No weather files found in %s", RAW_DIR)
+        log.warning("No weather files found in %s", DATA_DIRS)
         return 0
 
     total = 0
@@ -311,7 +323,7 @@ def ingest_weather(conn: pymysql.Connection) -> int:
 
 def main() -> None:
     log.info("=== Step 2: Ingestion start ===")
-    log.info("Raw data directory: %s", RAW_DIR)
+    log.info("Data directories: %s", DATA_DIRS)
 
     # ── 1. Sensor registry ────────────────────────────────────────────────────
     sensors_df = fetch_sensor_registry()
