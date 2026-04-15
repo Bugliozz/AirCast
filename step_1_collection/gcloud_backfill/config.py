@@ -69,5 +69,22 @@ CHECKPOINT_EVERY_N_DAYS: int = 5
 BACKFILL_START: str = os.environ.get("BACKFILL_START", "2024-01-01")
 BACKFILL_END: str = os.environ.get("BACKFILL_END", "2025-04-07")
 
+# -- Heal mode (weekly re-ingestion of preliminary blobs) ---------------------
+# When OVERWRITE_EXISTING is true, the job runs in "heal" mode:
+#   * BACKFILL_START/END are ignored and the window is computed dynamically
+#     as [today - HEAL_WINDOW_START_OFFSET, today - HEAL_WINDOW_END_OFFSET].
+#   * The checkpoint is ignored: dates in the window are (re)processed and
+#     the resulting blobs on GCS are overwritten unconditionally.
+# By default (OVERWRITE_EXISTING=false) the job behaves exactly as before.
+OVERWRITE_EXISTING: bool = (
+    os.environ.get("OVERWRITE_EXISTING", "false").lower() == "true"
+)
+HEAL_WINDOW_START_OFFSET: int = int(
+    os.environ.get("HEAL_WINDOW_START_OFFSET", "21")
+)
+HEAL_WINDOW_END_OFFSET: int = int(
+    os.environ.get("HEAL_WINDOW_END_OFFSET", "15")
+)
+
 # -- Lock ----------------------------------------------------------------------
 LOCK_TIMEOUT_MINUTES: int = 180     # stale-lock threshold

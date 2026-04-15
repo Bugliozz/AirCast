@@ -98,8 +98,42 @@ def fetch_arpa_measurements(
             break
         offset += ARPA_PAGE_SIZE
 
-    log.info("[%s] ARPA: %d measurement records.", date_str, len(records))
-    return records
+    sanitized = _sanitize_arpa_records(records)
+    log.info(
+        "[%s] ARPA: %d measurement records (%d with null valore after sanitization).",
+        date_str,
+        len(sanitized),
+        sum(1 for r in sanitized if r.get("valore") is None),
+    )
+    return sanitized
+
+
+def _sanitize_arpa_records(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Null-out sentinel/invalid measurements while preserving the record.
+
+    ARPA marks not-yet-validated readings with ``stato != 'VA'`` and often
+    uses ``-9999`` as a sentinel ``valore``. We keep every record (so we
+    retain ``stato``, ``idsensore``, ``data`` for traceability) but set
+    ``valore`` to ``None`` — serialised as JSON ``null`` — whenever the
+    reading is not a trustworthy positive number.
+    """
+    cleaned: list[dict[str, Any]] = []
+    for record in records:
+        new_record = dict(record)
+        raw_valore = new_record.get("valore")
+        try:
+            valore = float(raw_valore) if raw_valore is not None else None
+        except (TypeError, ValueError):
+            valore = None
+        stato = new_record.get("stato")
+        if valore is None or valore <= 0 or stato != "VA":
+            new_record["valore"] = None
+        else:
+            new_record["valore"] = valore
+        cleaned.append(new_record)
+    return cleaned
 
 
 # -- Open-Meteo ---------------------------------------------------------------

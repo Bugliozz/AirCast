@@ -13,11 +13,12 @@
 #   GCP_PROJECT_ID   – your GCP project id
 #
 # Optional env-vars (defaults shown):
-#   GCP_REGION       – europe-west1
-#   GCS_BUCKET       – exam-project-backfill
-#   ARPA_APP_TOKEN   – (empty)
-#   WINDOW_DAYS      – 7
-#   END_OFFSET_DAYS  – 1
+#   GCP_REGION              – europe-west1
+#   GCS_BUCKET              – exam-project-backfill
+#   ARPA_APP_TOKEN          – (empty)
+#   WINDOW_DAYS             – 7
+#   END_OFFSET_DAYS         – 1
+#   FORCE_REFRESH_LAST_N_DAYS – 3
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -35,6 +36,7 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${JOB_NAME}:latest"
 
 WINDOW="${WINDOW_DAYS:-7}"
 END_OFFSET="${END_OFFSET_DAYS:-1}"
+FORCE_REFRESH_N="${FORCE_REFRESH_LAST_N_DAYS:-3}"
 APP_TOKEN="${ARPA_APP_TOKEN:-}"
 
 echo "============================================================"
@@ -44,7 +46,7 @@ echo "  Project:   ${PROJECT_ID}"
 echo "  Region:    ${REGION}"
 echo "  Bucket:    gs://${BUCKET}"
 echo "  Image:     ${IMAGE}"
-echo "  Window:    ${WINDOW} days, ending today-${END_OFFSET}"
+echo "  Window:    ${WINDOW} days, ending today-${END_OFFSET}, force-refresh last ${FORCE_REFRESH_N}"
 echo "============================================================"
 echo ""
 
@@ -69,6 +71,7 @@ echo ">>> Configuring Cloud Run Job..."
 ENV_VARS="GCS_BUCKET=${BUCKET}"
 ENV_VARS="${ENV_VARS},WINDOW_DAYS=${WINDOW}"
 ENV_VARS="${ENV_VARS},END_OFFSET_DAYS=${END_OFFSET}"
+ENV_VARS="${ENV_VARS},FORCE_REFRESH_LAST_N_DAYS=${FORCE_REFRESH_N}"
 if [ -n "${APP_TOKEN}" ]; then
   ENV_VARS="${ENV_VARS},ARPA_APP_TOKEN=${APP_TOKEN}"
 fi

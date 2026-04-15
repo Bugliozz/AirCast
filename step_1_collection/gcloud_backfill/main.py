@@ -47,8 +47,11 @@ from config import (
     DAYS_PER_BATCH,
     GCS_BUCKET,
     GCS_DATA_PREFIX,
+    HEAL_WINDOW_END_OFFSET,
+    HEAL_WINDOW_START_OFFSET,
     INTER_CELL_SLEEP_S,
     INTER_DAY_SLEEP_S,
+    OVERWRITE_EXISTING,
 )
 from rate_limiter import CircuitBreakerOpen, MaxRetriesExceeded, RateLimitedClient
 
@@ -97,9 +100,17 @@ def _get_gcs_client() -> gcs.Client:
 
 
 def upload_json(data: Any, blob_path: str) -> None:
-    """Serialize *data* as JSON and upload to ``gs://<bucket>/<blob_path>``."""
+    """Serialize *data* as JSON and upload to ``gs://<bucket>/<blob_path>``.
+
+    In heal mode (``OVERWRITE_EXISTING=true``) an informational log line is
+    emitted whenever an existing blob is about to be overwritten, so the
+    post-deploy verification can grep for it.  In normal mode GCS overwrites
+    silently (same behaviour as before).
+    """
     bucket = _get_gcs_client().bucket(GCS_BUCKET)
     blob = bucket.blob(blob_path)
+    if OVERWRITE_EXISTING and blob.exists():
+        log.info("Overwriting existing blob gs://%s/%s", GCS_BUCKET, blob_path)
     blob.upload_from_string(
         json.dumps(data, indent=2, ensure_ascii=False, default=str),
         content_type="application/json",
@@ -194,20 +205,44 @@ def collect_day(
 
 # -- Main loop ----------------------------------------------------------------
 
+def _heal_window() -> list[str]:
+    """Dynamic date window for heal mode: ``[today - START_OFFSET, today - END_OFFSET]``."""
+    today = date.today()
+    start = today - timedelta(days=HEAL_WINDOW_START_OFFSET)
+    end = today - timedelta(days=HEAL_WINDOW_END_OFFSET)
+    if end < start:
+        raise ValueError(
+            f"HEAL_WINDOW_END_OFFSET ({HEAL_WINDOW_END_OFFSET}) must be <= "
+            f"HEAL_WINDOW_START_OFFSET ({HEAL_WINDOW_START_OFFSET})."
+        )
+    return date_range(start.isoformat(), end.isoformat())
+
+
 def _run() -> None:
     client = RateLimitedClient()
-    all_dates = date_range(BACKFILL_START, BACKFILL_END)
     cp = load_checkpoint()
-    remaining = cp.remaining(all_dates)
+
+    if OVERWRITE_EXISTING:
+        # Heal mode: ignore BACKFILL_START/END and the checkpoint — every date
+        # in the dynamic window is (re)processed and the blob overwritten.
+        all_dates = _heal_window()
+        remaining = list(all_dates)
+        log.info(
+            "HEAL mode ON — window [%s..%s] (%d days), ignoring checkpoint.",
+            all_dates[0], all_dates[-1], len(all_dates),
+        )
+    else:
+        all_dates = date_range(BACKFILL_START, BACKFILL_END)
+        remaining = cp.remaining(all_dates)
 
     log.info(
         "Total: %d | Done: %d | Remaining: %d | Previously failed: %d",
         len(all_dates), len(cp.completed), len(remaining), len(cp.failed),
     )
 
-    # Nothing left?  Try retrying previously failed dates.
+    # Nothing left?  Try retrying previously failed dates (only in normal mode).
     if not remaining:
-        if cp.failed:
+        if not OVERWRITE_EXISTING and cp.failed:
             remaining = sorted(cp.failed.keys())
             log.info("All dates done — retrying %d failed dates.", len(remaining))
         else:

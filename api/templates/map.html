@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% set active_page = 'map' %}
+{% block title %}Mappa allerte - PM10 Forecast Lombardia{% endblock %}
+
+{% block content %}
+  <div class="d-flex justify-content-between align-items-end mb-3">
+    <div>
+      <h1 class="h3 mb-1">Mappa allerte PM10 - giorno+1</h1>
+      <p class="disclaimer mb-0">
+        Marker colorati per classe di allerta prevista. Dati aggiornati ogni 15 minuti.
+      </p>
+    </div>
+    <div>
+      <span class="alert-badge alert-verde">verde</span>
+      <span class="alert-badge alert-giallo">giallo</span>
+      <span class="alert-badge alert-arancione">arancione</span>
+      <span class="alert-badge alert-rosso">rosso</span>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body p-0" style="height: 70vh;">
+      <iframe
+        srcdoc="{{ map_html|e }}"
+        style="width: 100%; height: 100%; border: 0;"
+        title="Mappa allerte PM10 Lombardia"
+      ></iframe>
+    </div>
+  </div>
+{% endblock %}

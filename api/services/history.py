@@ -19,13 +19,26 @@ import pandas as pd
 
 from api.schemas import HistoryRecord, StationOut
 from api.services import predictor
+from api.services.recent_data import (
+    compute_data_quality,
+    fetch_recent_window,
+)
 from step_3_eda.config import PM10_LABELS, PM10_THRESHOLDS
 
 log = logging.getLogger(__name__)
 
 
-def _pm10_to_alert(value: Optional[float]) -> Optional[str]:
+def _sanitize_pm10(value: Optional[float]) -> Optional[float]:
+    """Return a PM10 value only when it is strictly positive."""
     if value is None or pd.isna(value):
+        return None
+    value = float(value)
+    return value if value > 0 else None
+
+
+def _pm10_to_alert(value: Optional[float]) -> Optional[str]:
+    value = _sanitize_pm10(value)
+    if value is None:
         return None
     for label, upper in zip(PM10_LABELS, PM10_THRESHOLDS[1:]):
         if value < upper:
@@ -54,20 +67,63 @@ def get_stations() -> List[StationOut]:
         .first()
         .sort_values("idstazione")
     )
-    return [
-        StationOut(
-            idstazione=str(row["idstazione"]),
-            nomestazione=str(row["nomestazione"]),
-            comune=str(row["comune"]),
-            lat=float(row["lat"]),
-            lon=float(row["lng"]),
+    stations: List[StationOut] = []
+    for _, row in meta.iterrows():
+        idstazione = str(row["idstazione"])
+        try:
+            dq = compute_data_quality(idstazione)
+            quality = dq.get("data_quality", "ok")
+            valid_days = int(dq.get("valid_days_last_7", 7))
+        except Exception as exc:  # noqa: BLE001 - quality is best-effort
+            log.warning("Data quality check failed for %s: %s", idstazione, exc)
+            quality, valid_days = "ok", 7
+        stations.append(
+            StationOut(
+                idstazione=idstazione,
+                nomestazione=str(row["nomestazione"]),
+                comune=str(row["comune"]),
+                lat=float(row["lat"]),
+                lon=float(row["lng"]),
+                data_quality=quality,
+                valid_days_last_7=valid_days,
+            )
         )
-        for _, row in meta.iterrows()
-    ]
+    return stations
+
+
+def _recent_window_safe() -> pd.DataFrame:
+    """Fetch the rolling GCS window, swallowing failures (offline / no creds)."""
+    try:
+        return fetch_recent_window()
+    except Exception as exc:  # noqa: BLE001 - recent data is best-effort
+        log.warning("Recent GCS window unavailable: %s", exc)
+        return pd.DataFrame(columns=["idstazione", "data_giorno", "pm10"])
+
+
+def get_latest_date() -> Optional[date]:
+    """Return the most recent ``data_giorno`` across parquet + GCS window."""
+    fs = _feature_store()
+    candidates: List[pd.Timestamp] = []
+    if not fs.empty and "data_giorno" in fs.columns:
+        ts = fs["data_giorno"].max()
+        if not pd.isna(ts):
+            candidates.append(pd.Timestamp(ts))
+
+    recent = _recent_window_safe()
+    if not recent.empty and "data_giorno" in recent.columns:
+        ts = recent["data_giorno"].max()
+        if not pd.isna(ts):
+            candidates.append(pd.Timestamp(ts))
+
+    return max(candidates).date() if candidates else None
 
 
 def get_history(station_id: str, from_date: date, to_date: date) -> List[HistoryRecord]:
-    """Return daily PM10 history for *station_id* within the date range (inclusive)."""
+    """Return daily PM10 history for *station_id* within the date range (inclusive).
+
+    Combines the static training parquet with the rolling GCS window so the
+    trailing days (published after the last parquet rebuild) also appear.
+    """
     fs = _feature_store()
 
     mask = (
@@ -75,12 +131,28 @@ def get_history(station_id: str, from_date: date, to_date: date) -> List[History
         & (fs["data_giorno"] >= pd.Timestamp(from_date))
         & (fs["data_giorno"] <= pd.Timestamp(to_date))
     )
-    subset = fs.loc[mask, ["data_giorno", "pm10"]].sort_values("data_giorno")
+    subset = fs.loc[mask, ["data_giorno", "pm10"]]
+
+    parquet_max = fs.loc[fs["idstazione"].astype(str) == str(station_id), "data_giorno"].max()
+    recent = _recent_window_safe()
+    if not recent.empty and "pm10" in recent.columns:
+        rmask = (
+            (recent["idstazione"].astype(str) == str(station_id))
+            & (recent["data_giorno"] >= pd.Timestamp(from_date))
+            & (recent["data_giorno"] <= pd.Timestamp(to_date))
+        )
+        if not pd.isna(parquet_max):
+            rmask &= recent["data_giorno"] > parquet_max
+        extra = recent.loc[rmask, ["data_giorno", "pm10"]]
+        if not extra.empty:
+            subset = pd.concat([subset, extra], ignore_index=True)
+
+    subset = subset.sort_values("data_giorno")
 
     return [
         HistoryRecord(
             date=row["data_giorno"].date(),
-            pm10=None if pd.isna(row["pm10"]) else float(row["pm10"]),
+            pm10=_sanitize_pm10(row["pm10"]),
             alert_class=_pm10_to_alert(row["pm10"]),
         )
         for _, row in subset.iterrows()

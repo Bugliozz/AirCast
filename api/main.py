@@ -4,14 +4,26 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import AsyncIterator, Dict
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from api.routers.forecast import router as forecast_router
 from api.routers.history import router as history_router
 from api.routers.stations import router as stations_router
-from api.services import predictor
+from api.services import history as history_service
+from api.services import map_view, predictor, recent_data
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+TEMPLATES_DIR = BASE_DIR / "templates"
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +31,8 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     predictor.load_models()
-    log.info("API startup complete: models and station registry loaded.")
+    recent_data.prefetch()
+    log.info("API startup complete: models, station registry, and recent-data cache loaded.")
     yield
 
 
@@ -30,6 +43,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 app.include_router(stations_router)
 app.include_router(forecast_router)
 app.include_router(history_router)
@@ -38,3 +53,133 @@ app.include_router(history_router)
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/", response_class=HTMLResponse, name="home")
+def home(request: Request) -> HTMLResponse:
+    map_html = map_view.render_alert_map_html()
+    return templates.TemplateResponse(
+        request,
+        "map.html",
+        {"map_html": map_html},
+    )
+
+
+@app.get("/forecast-ui", response_class=HTMLResponse, name="forecast_ui")
+def forecast_ui_get(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "forecast.html",
+        {
+            "stations": history_service.get_stations(),
+            "result": None,
+            "error": None,
+            "selected_station": None,
+            "selected_days": 1,
+        },
+    )
+
+
+@app.post("/forecast-ui", response_class=HTMLResponse)
+def forecast_ui_post(
+    request: Request,
+    station_id: str = Form(...),
+    days: int = Form(1),
+) -> HTMLResponse:
+    result = None
+    error = None
+    if days not in (1, 2):
+        error = "L'orizzonte deve essere 1 o 2 giorni."
+    else:
+        try:
+            result = predictor.predict(station_id, days=days)
+        except Exception as exc:  # noqa: BLE001 - surface to user
+            log.exception("Forecast UI failure for station %s", station_id)
+            error = f"Previsione non disponibile: {exc}"
+
+    return templates.TemplateResponse(
+        request,
+        "forecast.html",
+        {
+            "stations": history_service.get_stations(),
+            "result": result,
+            "error": error,
+            "selected_station": station_id,
+            "selected_days": days,
+        },
+    )
+
+
+def _parse_iso_date(value: str) -> date:
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+@app.get("/history-ui", response_class=HTMLResponse, name="history_ui")
+def history_ui_get(request: Request) -> HTMLResponse:
+    latest = history_service.get_latest_date() or date.today()
+    default_from = latest - timedelta(days=30)
+    return templates.TemplateResponse(
+        request,
+        "history.html",
+        {
+            "stations": history_service.get_stations(),
+            "chart_data": None,
+            "records": None,
+            "error": None,
+            "selected_station": None,
+            "from_date": default_from.isoformat(),
+            "to_date": latest.isoformat(),
+        },
+    )
+
+
+@app.post("/history-ui", response_class=HTMLResponse)
+def history_ui_post(
+    request: Request,
+    station_id: str = Form(...),
+    from_date: str = Form(...),
+    to_date: str = Form(...),
+) -> HTMLResponse:
+    chart_data = None
+    records = None
+    error = None
+    try:
+        d_from = _parse_iso_date(from_date)
+        d_to = _parse_iso_date(to_date)
+        if d_from > d_to:
+            raise ValueError("La data iniziale deve precedere quella finale.")
+
+        records = history_service.get_history(station_id, d_from, d_to)
+        if not records:
+            error = "Nessun dato storico disponibile per il periodo selezionato."
+        else:
+            stations = {s.idstazione: s for s in history_service.get_stations()}
+            station = stations.get(station_id)
+            title = (
+                f"PM10 — {station.nomestazione} ({station.comune})"
+                if station else f"PM10 — stazione {station_id}"
+            )
+            chart_data = {
+                "title": title,
+                "dates": [r.date.isoformat() for r in records],
+                "pm10": [r.pm10 for r in records],
+            }
+    except ValueError as exc:
+        error = f"Input non valido: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        log.exception("History UI failure for station %s", station_id)
+        error = f"Storico non disponibile: {exc}"
+
+    return templates.TemplateResponse(
+        request,
+        "history.html",
+        {
+            "stations": history_service.get_stations(),
+            "chart_data": chart_data,
+            "records": records,
+            "error": error,
+            "selected_station": station_id,
+            "from_date": from_date,
+            "to_date": to_date,
+        },
+    )

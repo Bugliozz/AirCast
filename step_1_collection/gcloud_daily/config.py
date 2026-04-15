@@ -77,5 +77,10 @@ WINDOW_DAYS: int = int(os.environ.get("WINDOW_DAYS", "7"))
 # we never target an incomplete calendar day.
 END_OFFSET_DAYS: int = int(os.environ.get("END_OFFSET_DAYS", "1"))
 
+# Number of tail days in the window to force-refresh (overwrite even if the
+# blob already exists).  Covers ARPA preliminary-data consolidation, which
+# typically happens within 1-3 days of the measurement date.
+FORCE_REFRESH_LAST_N_DAYS: int = int(os.environ.get("FORCE_REFRESH_LAST_N_DAYS", "3"))
+
 # -- Lock ----------------------------------------------------------------------
 LOCK_TIMEOUT_MINUTES: int = 60

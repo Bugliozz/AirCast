@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -23,6 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from google.cloud import storage as gcs
+
+from api.services import live_arpa
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ _SENSORS_REGISTRY_PATH = _ROOT / "data" / "raw" / "sensors_registry.json"
 _gcs_client: Optional[gcs.Client] = None
 _sensors_map: Optional[pd.DataFrame] = None
 _cache: Dict[str, Tuple[float, pd.DataFrame]] = {}
+_MEASUREMENTS_BLOB_RE = re.compile(r"(?P<day>\d{4}-\d{2}-\d{2})_measurements\.json$")
 
 
 def _client() -> gcs.Client:
@@ -66,10 +70,50 @@ def _load_sensors_map() -> pd.DataFrame:
     return df
 
 
-def _target_window() -> List[str]:
+def _target_window_by_date() -> List[str]:
     end = date.today() - timedelta(days=END_OFFSET_DAYS)
     start = end - timedelta(days=WINDOW_DAYS - 1)
     return [(start + timedelta(days=i)).isoformat() for i in range(WINDOW_DAYS)]
+
+
+def _target_window_from_bucket() -> List[str]:
+    """Resolve the rolling window from the latest measurement blobs on GCS.
+
+    Falls back to the local date-based window when GCS listing is unavailable,
+    for example in offline development or when credentials are missing.
+    """
+    try:
+        blobs = _client().list_blobs(GCS_BUCKET, prefix=f"{GCS_DATA_PREFIX}/")
+        available_dates: List[date] = []
+        for blob in blobs:
+            blob_name = blob.name.rsplit("/", maxsplit=1)[-1]
+            match = _MEASUREMENTS_BLOB_RE.fullmatch(blob_name)
+            if match is None:
+                continue
+            try:
+                available_dates.append(date.fromisoformat(match.group("day")))
+            except ValueError:
+                log.warning("Skipping malformed recent-data blob name: %s", blob.name)
+
+        if available_dates:
+            window = [d.isoformat() for d in sorted(set(available_dates))[-WINDOW_DAYS:]]
+            log.info(
+                "Recent window resolved from bucket: %s..%s (%d day blobs).",
+                window[0],
+                window[-1],
+                len(window),
+            )
+            return window
+
+        log.warning(
+            "No measurement blobs found under gs://%s/%s; falling back to date-based window.",
+            GCS_BUCKET,
+            GCS_DATA_PREFIX,
+        )
+    except Exception as exc:  # noqa: BLE001 - offline dev / missing creds fallback
+        log.warning("Recent window listing failed, using date-based fallback: %s", exc)
+
+    return _target_window_by_date()
 
 
 def _download_json(blob_name: str) -> Optional[Any]:
@@ -121,6 +165,9 @@ def _aggregate_measurements_daily(
         return pd.DataFrame(columns=empty_cols)
 
     df["valore"] = pd.to_numeric(df["valore"], errors="coerce")
+    invalid = df["valore"] <= 0
+    if invalid.any():
+        df.loc[invalid, "valore"] = pd.NA
     df = df.dropna(subset=["valore"])
     df["data_giorno"] = pd.to_datetime(df["data"]).dt.normalize()
 
@@ -208,27 +255,48 @@ def _aggregate_weather_daily(stations: List[dict]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def fetch_recent_window() -> pd.DataFrame:
-    """Download + aggregate the full 7-day window for all stations.
+    """Download + aggregate the latest recent-data window for all stations.
+
+    Bucket blobs are the primary source.  Any day that is missing PM10 data
+    from the bucket is gap-filled via the Socrata live API (validated
+    ``stato='VA'`` records only).
 
     Cached for ``RECENT_CACHE_TTL`` seconds so multiple predictions in the
     same time window don't re-download the JSON files.
     """
-    cache_key = ",".join(_target_window())
+    window = _target_window_from_bucket()
+    cache_key = ",".join(window)
     hit = _cache.get(cache_key)
     if hit and (time.time() - hit[0]) < CACHE_TTL_SECONDS:
         return hit[1]
 
     sensors = _load_sensors_map()
+    target_sensor_ids: set[str] = set(sensors["idsensore"].astype(str).tolist())
+
     pm10_frames: List[pd.DataFrame] = []
     weather_frames: List[pd.DataFrame] = []
+    bucket_dates_with_pm10: set[str] = set()
 
-    for d in _target_window():
+    for d in window:
         meas = _download_json(f"{GCS_DATA_PREFIX}/{d}_measurements.json")
         if meas:
-            pm10_frames.append(_aggregate_measurements_daily(meas, sensors))
+            day_df = _aggregate_measurements_daily(meas, sensors)
+            pm10_frames.append(day_df)
+            if "pm10" in day_df.columns and day_df["pm10"].notna().any():
+                bucket_dates_with_pm10.add(d)
         wx = _download_json(f"{GCS_DATA_PREFIX}/{d}_weather.json")
         if wx:
             weather_frames.append(_aggregate_weather_daily(wx))
+
+    # Gap-fill bucket misses with Socrata validated data
+    gap_dates = set(window) - bucket_dates_with_pm10
+    for d in sorted(gap_dates):
+        live_records = live_arpa.fetch_socrata_day(d, target_sensor_ids)
+        if live_records:
+            day_df = _aggregate_measurements_daily(live_records, sensors)
+            if "pm10" in day_df.columns and day_df["pm10"].notna().any():
+                pm10_frames.append(day_df)
+                log.info("Gap-filled %s with Socrata validated data.", d)
 
     pm10 = (
         pd.concat(pm10_frames, ignore_index=True)
@@ -253,7 +321,8 @@ def fetch_recent_window() -> pd.DataFrame:
         "Recent window aggregated: %d rows across %d stations (window=%s..%s).",
         len(merged),
         merged["idstazione"].nunique() if not merged.empty else 0,
-        _target_window()[0], _target_window()[-1],
+        window[0],
+        window[-1],
     )
     _cache[cache_key] = (time.time(), merged)
     return merged
@@ -264,3 +333,46 @@ def fetch_recent_for_station(station_id: str) -> pd.DataFrame:
     window = fetch_recent_window()
     rows = window[window["idstazione"].astype(str) == str(station_id)]
     return rows.sort_values("data_giorno").reset_index(drop=True)
+
+
+def compute_data_quality(station_id: str) -> Dict[str, Any]:
+    """Assess freshness/completeness of the 7-day window for a station.
+
+    A day counts as *valid* when a finite PM10 value is present.
+    Thresholds: ok ≥ 6, partial ≥ 3, stale < 3.
+    """
+    rows = fetch_recent_for_station(station_id)
+
+    if rows.empty or "pm10" not in rows.columns:
+        return {
+            "valid_days_last_7": 0,
+            "data_quality": "stale",
+            "last_valid_date": None,
+        }
+
+    valid = rows.dropna(subset=["pm10"])
+    valid_days = int(valid["data_giorno"].dt.normalize().nunique())
+    last_valid = (
+        valid["data_giorno"].max().date() if not valid.empty else None
+    )
+
+    if valid_days >= 6:
+        quality = "ok"
+    elif valid_days >= 3:
+        quality = "partial"
+    else:
+        quality = "stale"
+
+    return {
+        "valid_days_last_7": valid_days,
+        "data_quality": quality,
+        "last_valid_date": last_valid,
+    }
+
+
+def prefetch() -> None:
+    """Warm the recent-data cache without failing the API startup."""
+    try:
+        fetch_recent_window()
+    except Exception as exc:  # noqa: BLE001 - best effort only
+        log.warning("Recent-data prefetch skipped: %s", exc)

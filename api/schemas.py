@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
+
+DataQuality = Literal["ok", "partial", "stale"]
 
 
 class StationOut(BaseModel):
@@ -16,6 +18,8 @@ class StationOut(BaseModel):
     comune: str
     lat: float
     lon: float
+    data_quality: DataQuality = "ok"
+    valid_days_last_7: int = 7
 
 
 class WeatherUsed(BaseModel):
@@ -42,6 +46,8 @@ class ForecastResponse(BaseModel):
     station_id: str
     station_name: str
     predictions: List[ForecastItem]
+    data_quality: DataQuality = "ok"
+    valid_days_last_7: int = 7
 
 
 class HistoryRecord(BaseModel):

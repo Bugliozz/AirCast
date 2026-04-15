@@ -35,6 +35,7 @@ from api_client import (
 from config import (
     COORD_ROUND_DP,
     END_OFFSET_DAYS,
+    FORCE_REFRESH_LAST_N_DAYS,
     GCS_BUCKET,
     GCS_DATA_PREFIX,
     INTER_CELL_SLEEP_S,
@@ -88,16 +89,27 @@ def target_window() -> list[str]:
     ]
 
 
-def missing_dates(dates: list[str]) -> list[str]:
-    """A date is missing if either the measurements OR the weather JSON is
-    absent on GCS."""
-    missing: list[str] = []
+def dates_to_fetch(dates: list[str]) -> list[str]:
+    """Return the dates that need to be (re-)fetched.
+
+    A date is included if:
+    - either the measurements OR the weather JSON is absent on GCS, OR
+    - it falls within the last ``FORCE_REFRESH_LAST_N_DAYS`` of the window
+      (tail days are always re-fetched to close ARPA preliminary-data gaps).
+
+    The returned list preserves chronological order with no duplicates.
+    """
+    force_refresh_set = set(dates[-FORCE_REFRESH_LAST_N_DAYS:]) if FORCE_REFRESH_LAST_N_DAYS > 0 else set()
+    to_fetch: list[str] = []
     for d in dates:
+        if d in force_refresh_set:
+            to_fetch.append(d)
+            continue
         meas_ok = blob_exists(f"{GCS_DATA_PREFIX}/{d}_measurements.json")
         wx_ok = blob_exists(f"{GCS_DATA_PREFIX}/{d}_weather.json")
         if not (meas_ok and wx_ok):
-            missing.append(d)
-    return missing
+            to_fetch.append(d)
+    return to_fetch
 
 
 # -- Grid preparation (same as backfill) --------------------------------------
@@ -131,21 +143,19 @@ def collect_day(
     stations: pd.DataFrame,
     grid_cells: list[tuple[str, str]],
 ) -> dict[str, int]:
-    # ARPA measurements (only write if not already present).
+    # ARPA measurements — always overwrite so force-refresh closes ARPA gaps.
     meas_path = f"{GCS_DATA_PREFIX}/{date_str}_measurements.json"
-    meas_count: int
     if blob_exists(meas_path):
-        meas_count = -1  # flagged as "already present"
-    else:
-        all_meas = fetch_arpa_measurements(client, date_str)
-        measurements = [m for m in all_meas if m["idsensore"] in target_ids]
-        upload_json(measurements, meas_path)
-        meas_count = len(measurements)
+        log.info("Overwriting %s", meas_path)
+    all_meas = fetch_arpa_measurements(client, date_str)
+    measurements = [m for m in all_meas if m["idsensore"] in target_ids]
+    upload_json(measurements, meas_path)
+    meas_count: int = len(measurements)
 
-    # Weather per grid cell (only write if not already present).
+    # Weather per grid cell — always overwrite.
     wx_path = f"{GCS_DATA_PREFIX}/{date_str}_weather.json"
     if blob_exists(wx_path):
-        return {"measurements": meas_count, "weather_stations": -1, "failed_cells": 0}
+        log.info("Overwriting %s", wx_path)
 
     weather_cache: dict[tuple[str, str], dict[str, Any]] = {}
     failed_cells = 0
@@ -188,13 +198,14 @@ def _run() -> None:
     log.info("Target window: %s ... %s (%d days)",
              window[0], window[-1], len(window))
 
-    missing = missing_dates(window)
-    if not missing:
+    to_fetch = dates_to_fetch(window)
+    if not to_fetch:
         log.info("All %d window days already present on GCS — nothing to do.",
                  len(window))
         return
 
-    log.info("Missing %d/%d days: %s", len(missing), len(window), missing)
+    log.info("Fetching %d/%d days (force-refresh last N=%d): %s",
+             len(to_fetch), len(window), FORCE_REFRESH_LAST_N_DAYS, to_fetch)
 
     client = RateLimitedClient()
     log.info("Fetching sensor registry...")
@@ -203,8 +214,8 @@ def _run() -> None:
     log.info("Grid: %d cells from %d stations, %d target sensors.",
              len(grid_cells), len(stations), len(target_ids))
 
-    for i, d in enumerate(missing, start=1):
-        log.info("[%d/%d] Collecting %s ...", i, len(missing), d)
+    for i, d in enumerate(to_fetch, start=1):
+        log.info("[%d/%d] Collecting %s ...", i, len(to_fetch), d)
         try:
             stats = collect_day(client, d, target_ids, stations, grid_cells)
             log.info("[%s] OK  meas=%s  weather=%s  failed_cells=%d",
@@ -216,7 +227,7 @@ def _run() -> None:
         except Exception as exc:
             log.error("[%s] FAILED: %s", d, exc)
 
-        if i < len(missing):
+        if i < len(to_fetch):
             time.sleep(INTER_DAY_SLEEP_S)
 
     log.info("Daily refresh done.  HTTP stats: %s", client.stats)
@@ -224,8 +235,8 @@ def _run() -> None:
 
 def main() -> None:
     log.info("=" * 60)
-    log.info("Daily Refresh  window=%d  end_offset=%d",
-             WINDOW_DAYS, END_OFFSET_DAYS)
+    log.info("Daily Refresh  window=%d  end_offset=%d  force_refresh_last_n=%d",
+             WINDOW_DAYS, END_OFFSET_DAYS, FORCE_REFRESH_LAST_N_DAYS)
     log.info("Bucket: gs://%s/%s", GCS_BUCKET, GCS_DATA_PREFIX)
     log.info("=" * 60)
 

@@ -134,6 +134,73 @@ else
     --oauth-service-account-email="${SA_EMAIL}"
 fi
 
+# -- 6. Heal Cloud Run Job + weekly scheduler ---------------------------------
+# Separate job that reuses the same image but re-ingests the preliminary
+# window [today-21, today-15] with ``stato='VA'`` and OVERWRITES the existing
+# blobs on GCS.  Triggered weekly (Saturday 02:00 Europe/Rome).
+HEAL_JOB_NAME="backfill-heal"
+HEAL_SCHEDULER_NAME="trigger-heal"
+HEAL_WINDOW_START="${HEAL_WINDOW_START_OFFSET:-21}"
+HEAL_WINDOW_END="${HEAL_WINDOW_END_OFFSET:-15}"
+
+echo ">>> Configuring heal Cloud Run Job (${HEAL_JOB_NAME})..."
+
+HEAL_ENV_VARS="GCS_BUCKET=${BUCKET}"
+HEAL_ENV_VARS="${HEAL_ENV_VARS},DAYS_PER_BATCH=0"
+HEAL_ENV_VARS="${HEAL_ENV_VARS},OVERWRITE_EXISTING=true"
+HEAL_ENV_VARS="${HEAL_ENV_VARS},HEAL_WINDOW_START_OFFSET=${HEAL_WINDOW_START}"
+HEAL_ENV_VARS="${HEAL_ENV_VARS},HEAL_WINDOW_END_OFFSET=${HEAL_WINDOW_END}"
+if [ -n "${APP_TOKEN}" ]; then
+  HEAL_ENV_VARS="${HEAL_ENV_VARS},ARPA_APP_TOKEN=${APP_TOKEN}"
+fi
+
+if gcloud run jobs describe "${HEAL_JOB_NAME}" \
+      --project="${PROJECT_ID}" --region="${REGION}" &>/dev/null; then
+  gcloud run jobs update "${HEAL_JOB_NAME}" \
+    --project="${PROJECT_ID}" \
+    --region="${REGION}" \
+    --image="${IMAGE}" \
+    --task-timeout=21600 \
+    --max-retries=2 \
+    --set-env-vars="${HEAL_ENV_VARS}" \
+    --memory=2Gi \
+    --cpu=1
+else
+  gcloud run jobs create "${HEAL_JOB_NAME}" \
+    --project="${PROJECT_ID}" \
+    --region="${REGION}" \
+    --image="${IMAGE}" \
+    --task-timeout=21600 \
+    --max-retries=2 \
+    --set-env-vars="${HEAL_ENV_VARS}" \
+    --memory=2Gi \
+    --cpu=1
+fi
+
+echo ">>> Configuring weekly heal Cloud Scheduler (${HEAL_SCHEDULER_NAME})..."
+HEAL_JOB_URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${HEAL_JOB_NAME}:run"
+
+if gcloud scheduler jobs describe "${HEAL_SCHEDULER_NAME}" \
+      --project="${PROJECT_ID}" --location="${REGION}" &>/dev/null; then
+  gcloud scheduler jobs update http "${HEAL_SCHEDULER_NAME}" \
+    --project="${PROJECT_ID}" \
+    --location="${REGION}" \
+    --schedule="0 2 * * 6" \
+    --time-zone="Europe/Rome" \
+    --uri="${HEAL_JOB_URI}" \
+    --http-method=POST \
+    --oauth-service-account-email="${SA_EMAIL}"
+else
+  gcloud scheduler jobs create http "${HEAL_SCHEDULER_NAME}" \
+    --project="${PROJECT_ID}" \
+    --location="${REGION}" \
+    --schedule="0 2 * * 6" \
+    --time-zone="Europe/Rome" \
+    --uri="${HEAL_JOB_URI}" \
+    --http-method=POST \
+    --oauth-service-account-email="${SA_EMAIL}"
+fi
+
 # -- Done ---------------------------------------------------------------------
 echo ""
 echo "============================================================"

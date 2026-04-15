@@ -44,6 +44,8 @@ def get_forecast(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         log.exception("Forecast generation failed: %s", exc)
         raise HTTPException(

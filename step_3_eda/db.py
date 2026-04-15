@@ -89,6 +89,7 @@ def load_pm10_daily(conn: pymysql.Connection) -> pd.DataFrame:
         JOIN stations st ON s.idstazione = st.idstazione
         WHERE s.tiposensore LIKE '%PM10%'
           AND m.valore IS NOT NULL
+          AND m.valore > 0
         GROUP BY s.idstazione, st.nomestazione, st.provincia, st.comune, st.quota, st.lat, st.lng, DATE(m.data)
         ORDER BY s.idstazione, data_giorno
     """

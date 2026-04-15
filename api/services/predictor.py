@@ -19,7 +19,12 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from api.services.recent_data import fetch_recent_for_station
+from fastapi import HTTPException
+
+from api.services.recent_data import (
+    compute_data_quality,
+    fetch_recent_for_station,
+)
 from api.services.weather import fetch_forecast_weather
 from step_3_eda.config import (
     MONTH_TO_SEASON,
@@ -172,11 +177,35 @@ def _stagnation_index(wind: float, blh_min: float, precip: Optional[float]) -> O
     )
 
 
+def _compute_pm10_feature_context(lag_data: pd.DataFrame) -> Dict[str, Any]:
+    """Compute PM10 lag/rolling values from the recent window."""
+    pm10_series = pd.to_numeric(lag_data["pm10"], errors="coerce").ffill(limit=2)
+
+    valid = pm10_series.dropna().reset_index(drop=True)
+    roll7_window = pm10_series.tail(7).dropna()
+    roll3_window = pm10_series.tail(3).dropna()
+
+    lag1 = float(valid.iloc[-1]) if not valid.empty else np.nan
+    lag2 = float(valid.iloc[-2]) if len(valid) >= 2 else np.nan
+
+    roll7 = float(roll7_window.mean()) if len(roll7_window) >= 3 else np.nan
+    roll3 = float(roll3_window.mean()) if len(roll3_window) >= 2 else np.nan
+
+    return {
+        "lag1": lag1,
+        "lag2": lag2,
+        "roll7": roll7,
+        "roll3": roll3,
+        "pm10_diff": lag1 - lag2 if not (np.isnan(lag1) or np.isnan(lag2)) else np.nan,
+    }
+
+
 def build_features(
     station_id: str,
     target_date: date,
     weather_daily: Dict[str, Any],
     lag_data: pd.DataFrame,
+    pm10_context: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """Construct a single-row feature frame for *target_date*.
 
@@ -240,17 +269,13 @@ def build_features(
     })
 
     # ---- PM10 lags / rolling --------------------------------------------
-    pm10_series = lag_data["pm10"].astype(float)
-    lag1 = float(pm10_series.iloc[-1])
-    lag2 = float(pm10_series.iloc[-2]) if len(pm10_series) >= 2 else lag1
-    roll7 = float(pm10_series.tail(7).mean())
-    roll3 = float(pm10_series.tail(3).mean())
+    pm10_context = pm10_context or _compute_pm10_feature_context(lag_data)
     row.update({
-        "pm10_lag1": lag1,
-        "pm10_lag2": lag2,
-        "pm10_roll7": roll7,
-        "pm10_roll3": roll3,
-        "pm10_diff": lag1 - lag2,
+        "pm10_lag1": pm10_context["lag1"],
+        "pm10_lag2": pm10_context["lag2"],
+        "pm10_roll7": pm10_context["roll7"],
+        "pm10_roll3": pm10_context["roll3"],
+        "pm10_diff": pm10_context["pm10_diff"],
     })
 
     # ---- Meteo lags / rolling — shift history by one day ----------------
@@ -301,6 +326,19 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
     _require_loaded()
 
     meta = get_station_metadata(station_id)
+
+    dq = compute_data_quality(station_id)
+    quality = dq.get("data_quality", "ok")
+    valid_days = int(dq.get("valid_days_last_7", 0))
+    if quality == "stale":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Dati recenti insufficienti per una previsione affidabile "
+                f"(valid_days={valid_days} < 3)."
+            ),
+        )
+
     lag_data = get_lag_features(station_id, conn)
     weather_records = fetch_forecast_weather(meta["lat"], meta["lng"], days)
     if len(weather_records) < days:
@@ -315,8 +353,15 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
     for day_offset in range(1, days + 1):
         target_date = today + timedelta(days=day_offset)
         weather = weather_records[day_offset - 1]
+        pm10_context = _compute_pm10_feature_context(rolling_lag)
 
-        X_future = build_features(station_id, target_date, weather, rolling_lag)
+        X_future = build_features(
+            station_id,
+            target_date,
+            weather,
+            rolling_lag,
+            pm10_context=pm10_context,
+        )
 
         pm10_pred = float(_regression_model.predict(X_future)[0])
         alert_index = int(_classification_model.predict(X_future)[0])
@@ -351,4 +396,6 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
         "station_id": meta["idstazione"],
         "station_name": meta["nomestazione"],
         "predictions": predictions,
+        "data_quality": quality,
+        "valid_days_last_7": valid_days,
     }

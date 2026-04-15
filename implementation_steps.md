@@ -199,30 +199,192 @@ Obiettivo: il container Cloud Run non deve parlare con MySQL. MySQL resta SOLO c
 
 ### 7.2 Templates & static
 
-- [ ] Crea `api/templates/` e `api/static/` (CSS minimale + logo)
-- [ ] `api/main.py`: `app.mount("/static", StaticFiles(directory="api/static"))` + `templates = Jinja2Templates(directory="api/templates")`
-- [ ] Aggiungi `jinja2` a `requirements.txt`
+- [x] Crea `api/templates/` e `api/static/` (CSS minimale + logo)
+- [x] `api/main.py`: `app.mount("/static", StaticFiles(directory="api/static"))` + `templates = Jinja2Templates(directory="api/templates")`
+- [x] Aggiungi `jinja2` a `requirements.txt`
 
 ### 7.3 Pagine UI (Jinja2 templates)
 
-- [ ] `templates/base.html`: layout comune (Bootstrap via CDN, navbar con link Mappa / Previsione / Storico)
-- [ ] `templates/map.html` — Mappa allerte Lombardia
+- [x] `templates/base.html`: layout comune (Bootstrap via CDN, navbar con link Mappa / Previsione / Storico)
+- [x] `templates/map.html` — Mappa allerte Lombardia
   - Route `GET /` (home) → renderizza mappa Folium embeddata come HTML
   - Server-side: carica stazioni + fetch previsione day+1 per tutte (cache 15min), genera mappa Folium con marker colorati per classe allerta, passa `map_html` al template
-- [ ] `templates/forecast.html` — Previsione singola stazione
+- [x] `templates/forecast.html` — Previsione singola stazione
   - Route `GET /forecast-ui` → form con dropdown stazioni + radio 1/2 giorni
   - Route `POST /forecast-ui` → chiama `predictor.predict(station_id, days)`, mostra PM10 grande + badge classe allerta + tabella meteo usate + disclaimer day+2
-- [ ] `templates/history.html` — Serie storica
+- [x] `templates/history.html` — Serie storica
   - Route `GET /history-ui` → form: dropdown stazione + date picker from/to (default ultimi 30gg)
   - Route `POST /history-ui` → chiama `history.get_history(...)`, renderizza grafico Plotly inline con bande soglie allerta
 
 ### 7.4 Verifica frontend
 
-- [ ] `uvicorn api.main:app --reload` avvia senza errori, senza MySQL
-- [ ] `GET /` → mappa Lombardia con marker colorati
-- [ ] `GET /forecast-ui` + submit → previsione con badge allerta
-- [ ] `GET /history-ui` + submit → grafico storico con bande
-- [ ] Endpoint JSON esistenti (`/stations`, `/forecast`, `/history`) continuano a funzionare
+- [x] `uvicorn api.main:app --reload` avvia senza errori, senza MySQL
+- [x] `GET /` → mappa Lombardia con marker colorati
+- [x] `GET /forecast-ui` + submit → previsione con badge allerta
+- [x] `GET /history-ui` + submit → grafico storico con bande
+- [x] Endpoint JSON esistenti (`/stations`, `/forecast`, `/history`) continuano a funzionare
+
+---
+
+## Step 7.5 — Data validation hygiene (stato ARPA + freshness UI)
+
+> **Contesto.** ARPA marca i record recenti come `stato='NA'` con `valore=-9999`; la validazione (`stato='VA'`) arriva ~12 giorni lavorativi dopo. Il daily job scarica i blob una sola volta (skip-if-exists in `gcloud_daily/main.py:137`) e non li riscrive mai: un blob salvato in forma preliminare resta sporco per sempre. Oggi il filtro `valore <= 0` esiste solo per PM10 (`api/services/recent_data.py:124`, `api/services/history.py:28`, `step_3_eda/db.py:90`) e non copre NO2/O3/CO/PM2.5. Soluzione a 5 livelli: sanificazione in ingestion, heal job settimanale, filtro al serving + data_quality, warning in UI, fix startup della finestra.
+
+### 7.5.1 Sanificazione in ingestion (`step_1_collection/gcloud_daily/`)
+
+Obiettivo: il blob su GCS è auto-descrittivo e pulito. Valori sentinel (`-9999`) rimossi prima dell'upload, senza però droppare l'intero record (teniamo `stato`, `idsensore`, `data` per tracciabilità).
+
+- [x] `step_1_collection/gcloud_daily/api_client.py` — subito dopo `fetch_arpa_measurements` ottiene la lista `records`, aggiungi passo di sanificazione: per ogni record converti `valore` a float; se `valore <= 0` o `stato != 'VA'` imposta `valore = None` (JSON `null`). Mantieni tutti gli altri campi.
+- [x] `step_1_collection/gcloud_daily/api_client.py:75` — lasciare `ARPA_REQUIRE_VALIDATED=false` come default (vogliamo comunque ingestare il giorno, anche parziale, e la sanificazione sopra si occupa del resto).
+- [x] `step_1_collection/gcloud_daily/main.py` — nessuna modifica alla logica skip-if-exists qui: la "guarigione" dei blob è compito dell'heal job (7.5.2).
+- [x] **Redeploy**: `bash step_1_collection/gcloud_daily/deploy.sh` → verifica che i blob dei prossimi giorni abbiano `valore: null` al posto di `-9999` per i record `stato='NA'`.
+
+### 7.5.2 Heal job settimanale (`step_1_collection/gcloud_backfill/`)
+
+Obiettivo: ogni sabato notte riscaricare con `stato='VA'` i giorni nella finestra `[today-21, today-15]` (ARPA a quel punto li ha consolidati) e **sovrascrivere** i blob preliminari del bucket.
+
+- [x] `step_1_collection/gcloud_backfill/config.py` — aggiungi `OVERWRITE_EXISTING: bool = os.environ.get("OVERWRITE_EXISTING", "false").lower() == "true"` e `HEAL_WINDOW_START_OFFSET` / `HEAL_WINDOW_END_OFFSET` (default 21 / 15).
+- [x] `step_1_collection/gcloud_backfill/main.py` — in heal mode (`OVERWRITE_EXISTING=true`) ignora `BACKFILL_START`/`BACKFILL_END` e il checkpoint, calcola la finestra dinamica `[today-HEAL_WINDOW_START_OFFSET, today-HEAL_WINDOW_END_OFFSET]` e sovrascrive i blob (log "Overwriting existing blob …" in `upload_json`).
+- [x] `step_1_collection/gcloud_backfill/api_client.py:76` — verifica che il filtro `stato = 'VA'` sia già presente (lo è). Nessuna modifica.
+- [x] `step_1_collection/gcloud_backfill/deploy.sh` — aggiungi un secondo Cloud Run Job `backfill-heal` con env `OVERWRITE_EXISTING=true`, `HEAL_WINDOW_START_OFFSET=21`, `HEAL_WINDOW_END_OFFSET=15`, e un Cloud Scheduler `trigger-heal` con cron `0 2 * * 6` (sabato 02:00 Europe/Rome).
+- [x] **Verifica deploy**: `gcloud run jobs execute backfill-heal --region=europe-west1` → nei log deve comparire "Overwriting existing blob ..." per i 7 giorni target; sul bucket i timestamp dei blob `[today-21..today-15]_*.json` si aggiornano. *(Eseguito 2026-04-15: execution `backfill-heal-mzwxh` OK, 7 blob measurements + 7 weather sovrascritti nella finestra 2026-03-25..2026-03-31.)*
+
+### 7.5.3 Filtro serving + computazione `data_quality`
+
+Obiettivo: belt-and-suspenders al read-time (se un blob vecchio non ancora "guarito" arriva sporco, lo puliamo lo stesso) + calcolo di `valid_days_last_7` per stazione.
+
+- [x] `api/services/recent_data.py:124` — espandi il filtro da solo PM10 a tutti gli inquinanti. Sostituisci il blocco `invalid_pm10 = ...` con: maschera `df["valore"] <= 0` → `df.loc[mask, "valore"] = pd.NA` (agisce su PM10, NO2, O3, CO, PM2.5 indistintamente).
+- [x] `api/services/recent_data.py` — nuova funzione `compute_data_quality(station_id: str) -> dict` che ritorna `{"valid_days_last_7": int, "data_quality": "ok"|"partial"|"stale", "last_valid_date": date|None}`. Regola: `ok` se `valid_days_last_7 >= 6`, `partial` se `3 <= valid_days_last_7 < 6`, `stale` se `< 3`. Calcolata dalla finestra già cached.
+- [x] `api/services/history.py:28` — `_sanitize_pm10` resta com'è (già corretta).
+- [x] `step_3_eda/db.py:90-92` — nessuna modifica: il training parquet viene già filtrato `valore > 0` + `stato='VA'` a monte (step_1_collection), resta gold.
+
+### 7.5.4 UI warning (`api/templates/`, `api/routers/`)
+
+Obiettivo: l'utente vede subito se una stazione ha dati parziali.
+
+- [x] `api/schemas.py` — estendi `StationOut` con `data_quality: Literal["ok","partial","stale"]` e `valid_days_last_7: int`.
+- [x] `api/services/history.py:56` — `get_stations()`: per ogni stazione chiama `recent_data.compute_data_quality(station_id)` e popola i nuovi campi (cached dalla finestra condivisa, no extra I/O).
+- [x] `api/templates/forecast.html` — nel dropdown stazioni aggiungi prefisso `●` colorato (verde/giallo/rosso) + `title`/tooltip che dice es. "Dati recenti parziali (4/7 giorni validi) — previsione meno affidabile".
+- [x] `api/templates/history.html` — stesso trattamento del dropdown.
+- [x] `api/services/map_view.py` — i marker mappa già mostrano la classe allerta; aggiunto bordo grigio/rosso se `data_quality != "ok"`.
+- [x] `api/services/predictor.py:predict` — se `data_quality == "stale"`, solleva `HTTPException(status_code=422, detail="Dati recenti insufficienti per una previsione affidabile (valid_days < 3)")` invece di predire.
+- [x] `api/schemas.py:ForecastResponse` — aggiungi `data_quality` anche nella risposta `/forecast` per i client API.
+
+### 7.5.5 Fix startup — prefetch + finestra dal bucket
+
+Obiettivo: eliminare i due bug al boot: cache non prewarmed e finestra calcolata da `date.today()` che può escludere l'ultimo giorno presente nel bucket.
+
+- [x] `api/services/recent_data.py:69-72` — sostituisci `_target_window()` basato su `date.today()` con `_target_window_from_bucket()`: lista i blob `{GCS_DATA_PREFIX}/*_measurements.json`, estrai le date dal nome, ordina, prendi gli ultimi `WINDOW_DAYS`. Fallback al calcolo attuale se il listing fallisce (es. offline dev).
+- [x] `api/services/recent_data.py` — nuova funzione `prefetch() -> None` wrapper best-effort di `fetch_recent_window()` che fa `try/except` loggando eventuali errori senza rompere il boot.
+- [x] `api/main.py:32-34` — nel `lifespan` aggiungi `recent_data.prefetch()` dopo `predictor.load_models()`. Import `from api.services import recent_data`.
+- [ ] **Verifica**: avvia `uvicorn api.main:app --reload`, nei log deve comparire "Recent window aggregated: N rows across M stations" prima della prima richiesta HTTP. La data massima nella finestra deve coincidere con l'ultimo blob su `gs://exam-project-backfill/data/raw/`.
+
+### 7.5.6 Robustezza rolling features ai NaN (`api/services/predictor.py`)
+
+Oggi, alle righe 244-247: `lag1 = pm10_series.iloc[-1]`, `lag2 = pm10_series.iloc[-2]`, `roll7 = pm10_series.tail(7).mean()`, `roll3 = pm10_series.tail(3).mean()`. Con NaN nella finestra `.iloc[-1]` restituisce NaN e il modello fallisce.
+
+- [x] `api/services/predictor.py:242-253` — rimpiazza accesso diretto `iloc[-1]` con helper `_last_valid(series, n=2)` che fa `series.dropna().tail(1).iloc[0]` (o NaN se vuota). Stesso per `lag2`.
+- [x] `api/services/predictor.py:246-247` — `roll7`: usa `pm10_series.tail(7).dropna()`; se `len >= 3` → mean, altrimenti NaN. Idem `roll3` con `len >= 2`.
+- [x] `api/services/predictor.py:243` — opzionale: `pm10_series = lag_data["pm10"].astype(float).ffill(limit=2)` per riempire buchi singoli isolati (max 2 giorni consecutivi).
+- [x] **Verifica**: test automatizzato simulando una finestra con NaN in posizione -1 → `predict()` non solleva e `data_quality` in risposta riflette il degrado.
+
+### 7.5.7 Verifica end-to-end
+
+- [ ] `python -m scripts.smoke_test_predict` con una stazione **ok** → predict normale, `data_quality=="ok"`.
+- [ ] Ripeti con una stazione che negli ultimi 7 giorni ha solo 4 record validi → `data_quality=="partial"`, predict funziona.
+- [ ] Ripeti con stazione con 1 record valido → 422 con messaggio chiaro.
+- [ ] Ispezione blob: `gcloud storage cat gs://exam-project-backfill/data/raw/$(date -d yesterday +%F)_measurements.json | jq '.[] | select(.stato=="NA") | .valore' | head` → deve stampare `null`, non `"-9999"`.
+- [ ] Dopo il primo sabato post-deploy: verifica che i blob in `[today-21, today-15]` abbiano `updated` time recente e zero record con `stato='NA'`.
+
+---
+
+## Step 7.6 — Live-first inference (force-refresh coda + fallback Socrata/Umbraco)
+
+> **Nota 2026-04-15:** chiamate Umbraco rimosse: in produzione l'endpoint restituiva sempre PM10 vuoto. Rimossi anche tutti i badge/flag "provisional" da UI e API; il gap-fill Socrata (validato `stato='VA'`) resta come silent fallback in `recent_data.py`. Lo step 7.6.6 di verifica end-to-end relativo ai badge non e' piu' applicabile.
+
+> **Contesto.** Dopo 7.5 i blob nascono puliti e vengono "guariti" settimanalmente, ma tra daily e heal esiste una zona grigia: il daily salta il giorno corrente (`END_OFFSET_DAYS=1`) e skippa i blob già esistenti (`gcloud_daily/main.py:137`), quindi un blob salvato parziale resta bucato finché non parte l'heal. Verifica 2026-04-15: per `idsensore=6918` (PM10 stazione 560) il bucket aveva 34/30/-/-/14 record nei giorni 10–14 aprile, mentre Socrata (`nicp-bhqi`) li aveva tutti (34/30/29/12/14). L'endpoint pubblico Umbraco `GetDatiStazioniRealTime?idStazione=560` risponde in live per D0 ma non sempre con PM10. Soluzione in due tempi: **(A)** il daily riscrive sempre gli ultimi `N` giorni del window; **(B)** l'API fa live-first per i giorni recenti con fallback al bucket, marcando in risposta le righe `provisional`. La UI mostra l'etichetta.
+>
+> **Parametri di default:**
+> - `FORCE_REFRESH_LAST_N_DAYS=3` (A). Il daily gira ogni giorno, quindi ciascun giorno viene riscritto 3 volte prima di "congelarsi". Copre il tipico jitter ARPA (consolidamento entro 1-3 giorni).
+> - `END_OFFSET_DAYS=1` lato API **invariato** (finestra finisce a ieri, 7 giorni pieni garantiti). D0 non entra nel window ma viene aggiunto come **overlay opportunistico** solo se Umbraco restituisce PM10: niente rischio di finestre con riga vuota in coda.
+> - `_LIVE_FALLBACK_WINDOW_DAYS=7` (= intero window). Socrata viene chiamato solo per i giorni effettivamente bucati nel bucket, quindi costo zero nel caso felice; ma quando un buco c'è, copre anche i giorni 4-7 del window (scoperti dal force-refresh a N=3 e non ancora raggiunti dall'heal a T-15).
+
+### 7.6.1 Daily job: force-refresh coda (`step_1_collection/gcloud_daily/`)
+
+Obiettivo: gli ultimi `N` giorni del window vengono sempre riscaricati e sovrascritti, anche se il blob esiste. I giorni più vecchi del window mantengono lo skip-if-exists (costo API contenuto).
+
+- [x] `step_1_collection/gcloud_daily/config.py` — nuova env `FORCE_REFRESH_LAST_N_DAYS: int = int(os.environ.get("FORCE_REFRESH_LAST_N_DAYS", "3"))`. Documentare: "gli ultimi N giorni del window vengono sempre riscaricati per chiudere i buchi ARPA preliminari".
+- [x] `step_1_collection/gcloud_daily/main.py:91` — `missing_dates(dates)` diventa `dates_to_fetch(dates) -> list[str]`: ritorna i giorni mancanti **più** gli ultimi `FORCE_REFRESH_LAST_N_DAYS` del window (deduplicati, preservando ordine cronologico).
+- [x] `step_1_collection/gcloud_daily/main.py:127` — `collect_day` perde il check `blob_exists` per measurements e weather: riscrive sempre. Logga `Overwriting {date_str}_measurements.json` quando il blob esisteva già (utile per audit).
+- [x] `step_1_collection/gcloud_daily/main.py:186` — `_run()`: rinomina la variabile `missing` → `to_fetch`, aggiorna log line "Missing X/Y" → "Fetching X/Y (force-refresh last N=…)".
+- [x] `step_1_collection/gcloud_daily/deploy.sh` — aggiungi `--update-env-vars=FORCE_REFRESH_LAST_N_DAYS=3` al deploy del Cloud Run Job.
+- [X] **Verifica deploy**: `gcloud run jobs execute daily-refresh --region=europe-west1` → nei log per i 3 giorni più recenti deve comparire `Overwriting …`; inspect `gcloud storage ls -l gs://exam-project-backfill/data/raw/*_measurements.json | head` → `updated` time fresco sugli ultimi 3 giorni; confronto record count con Socrata per `idsensore=6918` → numeri allineati.
+
+### 7.6.2 Live ARPA client (`api/services/live_arpa.py`, nuovo)
+
+Obiettivo: un modulo piccolo, testabile, senza dipendenze dal bucket. Due funzioni pure che ritornano record nella **stessa shape** dei blob (`[{idsensore, data, valore, stato, ...}]`), così l'aggregator esistente non cambia.
+
+- [x] Nuovo file `api/services/live_arpa.py`.
+- [x] `fetch_socrata_day(iso_date: str, target_sensor_ids: set[str], timeout_s: float = 10.0) -> list[dict]`:
+  - Chiama `https://www.dati.lombardia.it/resource/nicp-bhqi.json` con `$where=data >= 'YYYY-MM-DDT00:00:00.000' AND data <= 'YYYY-MM-DDT23:59:59.999' AND stato='VA'` (solo validati), `$limit=50000`.
+  - Filtra `idsensore in target_sensor_ids`.
+  - Applica la stessa sanificazione di `gcloud_daily/api_client.py:_sanitize_arpa_records` (sentinel → `None`).
+  - Swallow errori HTTP, ritorna `[]` + log warning.
+- [x] `fetch_umbraco_today(target_station_ids: set[str], timeout_s: float = 5.0) -> list[dict]`:
+  - Per ogni `idstazione` chiama `https://www.arpalombardia.it/umbraco/dettaglio/cosmosdb/GetDatiStazioniRealTime?idStazione={id}`.
+  - Parse dei campi PM10 (se presenti), wrappa in record `{idsensore, data, valore, stato: "NA"}` — sentinel `stato='NA'` perché è ufficialmente preliminare.
+  - Timeout aggressivo (5s) e `concurrent.futures.ThreadPoolExecutor(max_workers=4)` per parallelizzare. Qualsiasi stazione fallita viene silenziosamente droppata.
+- [x] Unit test `tests/test_live_arpa.py` con `requests-mock` o `httpx.MockTransport`: verifica shape output, sanificazione sentinel, behaviour su 500/timeout.
+
+### 7.6.3 Recent-data hybrid loader (`api/services/recent_data.py`)
+
+Obiettivo: merge bucket + live con tracciamento `provisional`. Nessuna modifica alle signature pubbliche esistenti, solo un nuovo metodo + un campo aggiuntivo nel cache entry.
+
+- [x] `api/services/recent_data.py:33` — **lascia `END_OFFSET_DAYS=1` invariato** (finestra 7 giorni ending yesterday, niente regressione).
+- [x] `api/services/recent_data.py:41` — estendi `_cache` type a `Dict[str, Tuple[float, pd.DataFrame, frozenset[str]]]` (aggiunge `provisional_dates`).
+- [x] Nuova costante `_LIVE_FALLBACK_WINDOW_DAYS = 7` (= intero window): il fallback Socrata può coprire qualsiasi giorno bucato del window, non solo la coda.
+- [x] `fetch_recent_window()`:
+  - Per ogni `d` in window, scarica il blob come oggi. Raccogli `bucket_dates_with_pm10: set[str]` controllando se il frame per quel giorno contiene almeno una riga PM10 non-null.
+  - `gap_dates = set(window) - bucket_dates_with_pm10`. Per ogni `d in gap_dates`: chiama `live_arpa.fetch_socrata_day(d, target_sensor_ids)` e aggrega nello stesso `pm10_frames`. Aggiungi `d` a `provisional_dates`.
+  - **D0 overlay opportunistico** (fuori dal window ufficiale): tenta `live_arpa.fetch_umbraco_today(target_station_ids)`. Se ritorna almeno un record PM10 valido, aggrega come riga extra con `data_giorno=today`, aggiungi `today.isoformat()` a `provisional_dates`. Se vuoto/errore, silently skip (la finestra resta di 7 giorni ending yesterday, identico al comportamento attuale).
+  - Ritorna il DataFrame; salva `(timestamp, df, frozenset(provisional_dates))` in cache.
+- [x] Nuova funzione `get_provisional_dates() -> frozenset[str]`: rilegge dal cache entry più recente (stessa chiave calcolata), ritorna `frozenset()` se miss.
+- [x] `compute_data_quality(station_id)` — aggiungi campo `provisional_days: int` (numero di date della finestra della stazione che sono in `provisional_dates`), senza alterare la logica esistente di `ok/partial/stale`.
+
+### 7.6.4 Schemas + predictor (`api/schemas.py`, `api/services/predictor.py`)
+
+Obiettivo: propagare `provisional` nella risposta `/forecast` per-riga (una previsione è provisional se **almeno un lag/roll usato** viene da una data provisional).
+
+- [x] `api/schemas.py:ForecastItem` — aggiungi `provisional: bool = False` e `provisional_reason: Optional[str] = None` (es. `"lag1 from live ARPA (2026-04-15)"`).
+- [x] `api/schemas.py:ForecastResponse` — aggiungi `provisional: bool = False` (true se almeno una `ForecastItem` è provisional) e `provisional_days: int = 0`.
+- [x] `api/services/predictor.py:predict` — dopo aver calcolato i lag/roll:
+  - Recupera `provisional_dates = recent_data.get_provisional_dates()`.
+  - Per ogni `ForecastItem` calcola `dates_used = {data di lag1, lag2, ultime 7/3 della finestra usate per roll}` (quelle effettivamente finite nelle feature).
+  - `item.provisional = bool(dates_used & provisional_dates)`.
+  - `item.provisional_reason` sintetica se true.
+  - A livello di risposta: `response.provisional = any(i.provisional for i in items)`, `response.provisional_days = len(dates_used & provisional_dates aggregato)`.
+- [x] Unit test `tests/test_predictor_provisional.py`: mock di `recent_data.get_provisional_dates()` → verifica che il flag si propaghi correttamente.
+
+### 7.6.5 UI — badge "dati in tempo reale"
+
+Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia su dati consolidati o su dati live (meno affidabili).
+
+- [x] `api/templates/forecast.html` — sotto la card della previsione, se `response.provisional` è true, mostra badge giallo "⚡ Previsione basata in parte su dati live (non ancora consolidati)". Tooltip: elenca le date provisional (`response.provisional_days` giorni).
+- [x] `api/templates/forecast.html` — per ogni `ForecastItem.provisional=true` aggiungi una piccola icona `⚡` accanto al valore PM10 previsto, con `title={{ item.provisional_reason }}`.
+- [x] `api/templates/history.html` — nella tabella storico, se una riga corrisponde a una `provisional_date` (esposta via nuovo campo opzionale in `HistoryRecord.provisional: bool = False`), stile corsivo + tooltip "Dato preliminare, in attesa di validazione ARPA".
+- [x] `api/services/history.py` — quando compone i record, consulta `recent_data.get_provisional_dates()` per settare `HistoryRecord.provisional` sulle date recenti.
+- [x] `api/schemas.py:HistoryRecord` — aggiungi `provisional: bool = False`.
+- [x] `api/static/` (CSS) — classe `.provisional-badge` (giallo) e `.provisional-row` (corsivo + colore attenuato).
+- [x] `api/services/map_view.py` — se la stazione selezionata ha `provisional_days > 0`, il marker guadagna un piccolo indicatore `⚡`. Nessun cambio di colore allerta (resta il predicted).
+
+### 7.6.6 Verifica end-to-end
+
+- [ ] **Daily job**: `gcloud run jobs execute daily-refresh` → log mostra `Overwriting …` per gli ultimi 3 giorni; record count su GCS per `idsensore=6918` allineato a Socrata.
+- [ ] **API con bucket completo**: forza cache eviction, chiama `GET /forecast/{station_id}` → `response.provisional == false` (fallback live non attivato).
+- [ ] **API con bucket bucato**: cancella manualmente un blob recente (`gcloud storage rm gs://…/2026-04-13_measurements.json`), evict cache, richiama forecast → Socrata fallback attiva, `provisional == true`, `provisional_reason` menziona la data.
+- [ ] **API con D0**: con `END_OFFSET_DAYS=0` la finestra include oggi → se Umbraco risponde, D0 contribuisce al lag1 e la risposta è `provisional`. Se Umbraco fallisce, la risposta resta valida usando fino a ieri (degradazione graceful).
+- [ ] **UI**: apri `http://localhost:8000/`, seleziona stazione con bucket bucato → badge ⚡ visibile nella card previsione, tooltip corretto, pagina `/history/{id}` mostra righe provisional in corsivo.
+- [ ] **Regressione 7.5**: `data_quality` resta coerente; una stazione senza dati né su bucket né su Socrata continua a tornare `stale` + HTTP 422 dalla `/forecast`.
 
 ---
 

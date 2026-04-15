@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% set active_page = 'history' %}
+{% block title %}Storico PM10 - PM10 Forecast Lombardia{% endblock %}
+
+{% block head_extra %}
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+{% endblock %}
+
+{% block content %}
+  <h1 class="h3 mb-3">Serie storica PM10</h1>
+
+  <form method="post" action="/history-ui" class="card shadow-sm p-4 mb-4">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-5">
+        <label for="station_id" class="form-label">Stazione</label>
+        <select id="station_id" name="station_id" class="form-select" required>
+          {% for s in stations %}
+            {% set dq = s.data_quality %}
+            {% set dot = '&#128994;' if dq == 'ok' else ('&#128993;' if dq == 'partial' else '&#128308;') %}
+            {% set tip = 'Dati recenti completi (' ~ s.valid_days_last_7 ~ '/7 giorni validi)' if dq == 'ok'
+                         else ('Dati recenti parziali (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione meno affidabile' if dq == 'partial'
+                               else 'Dati recenti insufficienti (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione non disponibile') %}
+            <option value="{{ s.idstazione }}"
+              title="{{ tip }}"
+              {% if selected_station == s.idstazione %}selected{% endif %}>
+              {{ dot|safe }} {{ s.nomestazione }} ({{ s.comune }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="from_date" class="form-label">Da</label>
+        <input type="date" id="from_date" name="from_date" class="form-control"
+               value="{{ from_date }}" required>
+      </div>
+      <div class="col-md-3">
+        <label for="to_date" class="form-label">A</label>
+        <input type="date" id="to_date" name="to_date" class="form-control"
+               value="{{ to_date }}" required>
+      </div>
+      <div class="col-md-1">
+        <button type="submit" class="btn btn-primary w-100">Vai</button>
+      </div>
+    </div>
+  </form>
+
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+
+  {% if chart_data %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div id="history-chart" style="height: 500px;"></div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const payload = {{ chart_data|tojson }};
+        const trace = {
+          x: payload.dates,
+          y: payload.pm10,
+          mode: 'lines+markers',
+          name: 'PM10',
+          line: { color: '#0b6fb8', width: 2 },
+          marker: { size: 5 },
+          hovertemplate: '%{x}<br>PM10: %{y:.1f} &mu;g/m&sup3;<extra></extra>',
+        };
+
+        const bands = [
+          { y0: 0,  y1: 20, color: 'rgba(46, 204, 113, 0.15)' },
+          { y0: 20, y1: 35, color: 'rgba(241, 196, 15, 0.18)' },
+          { y0: 35, y1: 50, color: 'rgba(230, 126, 34, 0.18)' },
+          { y0: 50, y1: 120, color: 'rgba(231, 76, 60, 0.18)' },
+        ];
+
+        const layout = {
+          title: payload.title,
+          xaxis: { title: 'Data', type: 'date' },
+          yaxis: { title: 'PM10 (&mu;g/m&sup3;)', rangemode: 'tozero' },
+          margin: { l: 60, r: 20, t: 50, b: 50 },
+          shapes: bands.map(b => ({
+            type: 'rect',
+            xref: 'paper',
+            x0: 0, x1: 1,
+            yref: 'y',
+            y0: b.y0, y1: b.y1,
+            fillcolor: b.color,
+            line: { width: 0 },
+            layer: 'below',
+          })),
+          plot_bgcolor: '#ffffff',
+        };
+
+        Plotly.newPlot('history-chart', [trace], layout, { responsive: true });
+      })();
+    </script>
+  {% endif %}
+
+  {% if records %}
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Dettaglio giornaliero</h2>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle history-table mb-0">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>PM10</th>
+                <th>Allerta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for record in records %}
+                <tr>
+                  <td>{{ record.date }}</td>
+                  <td>
+                    {% if record.pm10 is not none %}
+                      {{ "%.1f"|format(record.pm10) }} &mu;g/m&sup3;
+                    {% else %}&mdash;{% endif %}
+                  </td>
+                  <td>
+                    {% if record.alert_class %}
+                      <span class="alert-badge alert-{{ record.alert_class }}">
+                        {{ record.alert_class|upper }}
+                      </span>
+                    {% else %}
+                      <span class="text-muted">n/d</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}
