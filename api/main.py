@@ -32,8 +32,12 @@ log = logging.getLogger(__name__)
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     predictor.load_models()
     recent_data.prefetch()
+    recent_data.start_background_refresh()
     log.info("API startup complete: models, station registry, and recent-data cache loaded.")
-    yield
+    try:
+        yield
+    finally:
+        await recent_data.stop_background_refresh()
 
 
 app = FastAPI(

@@ -13,13 +13,14 @@
           {% for s in stations %}
             {% set dq = s.data_quality %}
             {% set dot = '&#128994;' if dq == 'ok' else ('&#128993;' if dq == 'partial' else '&#128308;') %}
-            {% set tip = 'Dati recenti completi (' ~ s.valid_days_last_7 ~ '/7 giorni validi)' if dq == 'ok'
+            {% set quality_tip = 'Dati recenti completi (' ~ s.valid_days_last_7 ~ '/7 giorni validi)' if dq == 'ok'
                          else ('Dati recenti parziali (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione meno affidabile' if dq == 'partial'
                                else 'Dati recenti insufficienti (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione non disponibile') %}
+            {% set nrt_tip = ' - dato PM10 di oggi disponibile (NRT)' if s.nrt_available else '' %}
             <option value="{{ s.idstazione }}"
-              title="{{ tip }}"
+              title="{{ quality_tip }}{{ nrt_tip }}"
               {% if selected_station == s.idstazione %}selected{% endif %}>
-              {{ dot|safe }} {{ s.nomestazione }} ({{ s.comune }})
+              {{ dot|safe }} {{ s.nomestazione }} ({{ s.comune }}){% if s.nrt_available %} &#9679; LIVE{% endif %}
             </option>
           {% endfor %}
         </select>
@@ -47,7 +48,14 @@
 
   {% if result %}
     <div class="mb-3">
-      <h2 class="h5 mb-1">{{ result.station_name }}</h2>
+      <h2 class="h5 mb-1">
+        {{ result.station_name }}
+        {% if result.nrt_available %}
+          <span class="badge bg-success ms-2" title="Il lag-1 della previsione usa il dato PM10 di oggi dal feed ARPA NRT">
+            &#9679; LIVE
+          </span>
+        {% endif %}
+      </h2>
       <p class="disclaimer mb-0">Stazione ID {{ result.station_id }}</p>
     </div>
 
@@ -57,6 +65,14 @@
         l'affidabilita della previsione e ridotta.
       </div>
     {% endif %}
+
+    <div class="alert {% if result.nrt_available %}alert-success{% else %}alert-secondary{% endif %} py-2 small">
+      {% if result.nrt_available %}
+        Lag-1 basato sul dato PM10 di oggi (ARPA NRT).
+      {% else %}
+        Lag-1 basato sul dato PM10 di ieri (questa stazione non e nel feed NRT).
+      {% endif %}
+    </div>
 
     {% for p in result.predictions %}
       <div class="card shadow-sm mb-3">

@@ -13,6 +13,7 @@ rules as ``step_3_eda/db.py``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -33,14 +34,24 @@ GCS_BUCKET = os.environ.get("GCS_BUCKET", "exam-project-backfill")
 GCS_DATA_PREFIX = "data/raw"
 WINDOW_DAYS = int(os.environ.get("WINDOW_DAYS", "7"))
 END_OFFSET_DAYS = int(os.environ.get("END_OFFSET_DAYS", "1"))
-CACHE_TTL_SECONDS = int(os.environ.get("RECENT_CACHE_TTL", "900"))  # 15 min
+# GCS blobs and Socrata validated records are immutable once written, so the
+# historical tier only needs to be refreshed when the rolling window advances.
+HISTORICAL_CACHE_TTL = int(os.environ.get("HISTORICAL_CACHE_TTL", "86400"))  # 24h
+# The ARPA NRT feed evolves hour-by-hour throughout the day.
+NRT_CACHE_TTL = int(os.environ.get("NRT_CACHE_TTL", "3600"))  # 1h
+# Background refresh cadence — defaults to the NRT tier TTL so today's PM10
+# never goes stale without a proactive refetch.
+REFRESH_INTERVAL_SECONDS = int(os.environ.get("REFRESH_INTERVAL_SECONDS", str(NRT_CACHE_TTL)))
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _SENSORS_REGISTRY_PATH = _ROOT / "data" / "raw" / "sensors_registry.json"
 
 _gcs_client: Optional[gcs.Client] = None
 _sensors_map: Optional[pd.DataFrame] = None
-_cache: Dict[str, Tuple[float, pd.DataFrame]] = {}
+_historical_cache: Dict[str, Tuple[float, pd.DataFrame]] = {}
+_nrt_cache: Optional[Tuple[float, pd.DataFrame]] = None
+_window_cache: Optional[Tuple[float, List[str]]] = None
+_refresh_task: Optional["asyncio.Task[None]"] = None
 _MEASUREMENTS_BLOB_RE = re.compile(r"(?P<day>\d{4}-\d{2}-\d{2})_measurements\.json$")
 
 
@@ -254,25 +265,27 @@ def _aggregate_weather_daily(stations: List[dict]) -> pd.DataFrame:
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_recent_window() -> pd.DataFrame:
-    """Download + aggregate the latest recent-data window for all stations.
+def _resolve_window() -> List[str]:
+    """Resolve the rolling window; cached alongside the historical tier (24h).
 
-    Bucket blobs are the primary source.  Any day that is missing PM10 data
-    from the bucket is gap-filled via the Socrata live API (validated
-    ``stato='VA'`` records only).
-
-    Cached for ``RECENT_CACHE_TTL`` seconds so multiple predictions in the
-    same time window don't re-download the JSON files.
+    Listing the bucket on every serving request is wasteful when the blob set
+    only changes once per day (after the daily 3am upload).
     """
+    global _window_cache
+    if _window_cache and (time.time() - _window_cache[0]) < HISTORICAL_CACHE_TTL:
+        return _window_cache[1]
     window = _target_window_from_bucket()
-    cache_key = ",".join(window)
-    hit = _cache.get(cache_key)
-    if hit and (time.time() - hit[0]) < CACHE_TTL_SECONDS:
-        return hit[1]
+    _window_cache = (time.time(), window)
+    return window
 
-    sensors = _load_sensors_map()
+
+def _compute_historical(window: List[str], sensors: pd.DataFrame) -> pd.DataFrame:
+    """GCS blobs + Socrata gap-fill for the window — no today/NRT piece.
+
+    Both sources are immutable once written, so a single refetch per day is
+    sufficient.
+    """
     target_sensor_ids: set[str] = set(sensors["idsensore"].astype(str).tolist())
-
     pm10_frames: List[pd.DataFrame] = []
     weather_frames: List[pd.DataFrame] = []
     bucket_dates_with_pm10: set[str] = set()
@@ -288,7 +301,6 @@ def fetch_recent_window() -> pd.DataFrame:
         if wx:
             weather_frames.append(_aggregate_weather_daily(wx))
 
-    # Gap-fill bucket misses with Socrata validated data
     gap_dates = set(window) - bucket_dates_with_pm10
     for d in sorted(gap_dates):
         live_records = live_arpa.fetch_socrata_day(d, target_sensor_ids)
@@ -303,28 +315,101 @@ def fetch_recent_window() -> pd.DataFrame:
         if pm10_frames
         else pd.DataFrame(columns=["idstazione", "data_giorno"])
     )
+    if not pm10.empty:
+        # Bucket measurements.json may cover a day with only pollutants (no PM10),
+        # and Socrata gap-fill then provides the PM10-only row for the same day.
+        # Collapse both into a single (station, day) row, keeping the first
+        # non-null value per column so pm10 and co-pollutants merge cleanly.
+        pm10 = (
+            pm10.sort_values(["idstazione", "data_giorno"])
+            .groupby(["idstazione", "data_giorno"], as_index=False)
+            .first()
+        )
     weather = (
         pd.concat(weather_frames, ignore_index=True)
         if weather_frames
         else pd.DataFrame(columns=["idstazione", "data_giorno"])
     )
-
     if pm10.empty:
-        merged = weather
-    elif weather.empty:
-        merged = pm10
-    else:
-        merged = pm10.merge(weather, on=["idstazione", "data_giorno"], how="outer")
+        return weather
+    if weather.empty:
+        return pm10
+    return pm10.merge(weather, on=["idstazione", "data_giorno"], how="outer")
 
-    merged = merged.sort_values(["idstazione", "data_giorno"]).reset_index(drop=True)
+
+def _compute_nrt_today(sensors: pd.DataFrame) -> pd.DataFrame:
+    """Today (T₀) PM10 from the provisional ARPA NRT feed.
+
+    Only ~21% of PM10 stations are in the NRT feed; stations without NRT
+    coverage keep their historical T−1 lag via the 3-level fallback in the
+    predictor.
+    """
+    target_sensor_ids: set[str] = set(sensors["idsensore"].astype(str).tolist())
+    nrt_records = live_arpa.fetch_nrt_today(target_sensor_ids)
+    if not nrt_records:
+        return pd.DataFrame(columns=["idstazione", "data_giorno"])
+    today_df = _aggregate_measurements_daily(nrt_records, sensors)
+    if "pm10" not in today_df.columns or not today_df["pm10"].notna().any():
+        return pd.DataFrame(columns=["idstazione", "data_giorno"])
     log.info(
-        "Recent window aggregated: %d rows across %d stations (window=%s..%s).",
-        len(merged),
-        merged["idstazione"].nunique() if not merged.empty else 0,
-        window[0],
-        window[-1],
+        "NRT refreshed: today's partial PM10 across %d stations from %d records.",
+        today_df["idstazione"].nunique(),
+        len(nrt_records),
     )
-    _cache[cache_key] = (time.time(), merged)
+    return today_df
+
+
+def _get_historical(window: List[str], sensors: pd.DataFrame) -> pd.DataFrame:
+    cache_key = ",".join(window)
+    hit = _historical_cache.get(cache_key)
+    if hit and (time.time() - hit[0]) < HISTORICAL_CACHE_TTL:
+        return hit[1]
+    df = _compute_historical(window, sensors)
+    _historical_cache[cache_key] = (time.time(), df)
+    for stale_key in list(_historical_cache.keys()):
+        if stale_key != cache_key:
+            del _historical_cache[stale_key]
+    return df
+
+
+def _get_nrt(sensors: pd.DataFrame) -> pd.DataFrame:
+    global _nrt_cache
+    if _nrt_cache and (time.time() - _nrt_cache[0]) < NRT_CACHE_TTL:
+        return _nrt_cache[1]
+    df = _compute_nrt_today(sensors)
+    _nrt_cache = (time.time(), df)
+    return df
+
+
+def fetch_recent_window() -> pd.DataFrame:
+    """Return the latest 7-day + today window for all stations.
+
+    Two-tier cache:
+
+    * **Historical** (GCS blobs + Socrata gap-fill): cached for
+      ``HISTORICAL_CACHE_TTL`` seconds (24h by default).  Both sources are
+      immutable once written, so a single refetch per day suffices.
+    * **NRT today**: cached for ``NRT_CACHE_TTL`` seconds (1h).  This is the
+      only piece that actually evolves within the day.
+    """
+    window = _resolve_window()
+    sensors = _load_sensors_map()
+    historical = _get_historical(window, sensors)
+    nrt_today = _get_nrt(sensors)
+
+    frames = [f for f in (historical, nrt_today) if not f.empty]
+    if not frames:
+        empty_cols = ["idstazione", "data_giorno"]
+        log.info("Recent window empty (window=%s..%s).", window[0], window[-1])
+        return pd.DataFrame(columns=empty_cols)
+
+    merged = pd.concat(frames, ignore_index=True)
+    merged = (
+        merged.sort_values(["idstazione", "data_giorno"])
+        .groupby(["idstazione", "data_giorno"], as_index=False)
+        .first()
+        .reset_index(drop=True)
+    )
     return merged
 
 
@@ -333,6 +418,31 @@ def fetch_recent_for_station(station_id: str) -> pd.DataFrame:
     window = fetch_recent_window()
     rows = window[window["idstazione"].astype(str) == str(station_id)]
     return rows.sort_values("data_giorno").reset_index(drop=True)
+
+
+def get_nrt_station_ids() -> set[str]:
+    """Return the set of station ids that have a non-null PM10 row for today.
+
+    Today's values come exclusively from the ARPA NRT feed (``ykhg-b8rs``),
+    which covers only a subset of PM10 stations — so presence of a
+    ``data_giorno == today`` row with non-null PM10 is a reliable signal that
+    the station's lag-1 feature reflects T0 (live) rather than T-1.
+    """
+    try:
+        window = fetch_recent_window()
+    except Exception as exc:  # noqa: BLE001 - NRT flag is best-effort
+        log.warning("NRT station set unavailable: %s", exc)
+        return set()
+
+    if window.empty or "pm10" not in window.columns:
+        return set()
+
+    today = pd.Timestamp(date.today())
+    today_rows = window[
+        (window["data_giorno"].dt.normalize() == today)
+        & window["pm10"].notna()
+    ]
+    return set(today_rows["idstazione"].astype(str).unique())
 
 
 def compute_data_quality(station_id: str) -> Dict[str, Any]:
@@ -368,6 +478,80 @@ def compute_data_quality(station_id: str) -> Dict[str, Any]:
         "data_quality": quality,
         "last_valid_date": last_valid,
     }
+
+
+def refresh() -> None:
+    """Proactive refresh of both cache tiers (stale-while-revalidate).
+
+    Always recomputes the NRT tier (hourly cadence).  Recomputes the historical
+    tier only when the rolling window has advanced to a new day or the 24h TTL
+    has elapsed.  On failure the existing cached DataFrames are preserved so
+    serving never sees an empty window.
+    """
+    global _nrt_cache, _window_cache
+    try:
+        sensors = _load_sensors_map()
+    except Exception as exc:  # noqa: BLE001 - registry load failure
+        log.warning("Refresh aborted: sensors registry unavailable: %s", exc)
+        return
+
+    try:
+        new_nrt = _compute_nrt_today(sensors)
+        _nrt_cache = (time.time(), new_nrt)
+    except Exception as exc:  # noqa: BLE001 - network/NRT failure
+        log.warning("NRT refresh failed, keeping stale cache: %s", exc)
+
+    try:
+        window = _target_window_from_bucket()
+        _window_cache = (time.time(), window)
+        cache_key = ",".join(window)
+        hit = _historical_cache.get(cache_key)
+        if not hit or (time.time() - hit[0]) >= HISTORICAL_CACHE_TTL:
+            new_hist = _compute_historical(window, sensors)
+            _historical_cache[cache_key] = (time.time(), new_hist)
+            for stale_key in list(_historical_cache.keys()):
+                if stale_key != cache_key:
+                    del _historical_cache[stale_key]
+            log.info(
+                "Historical tier refreshed (window=%s..%s).", window[0], window[-1]
+            )
+    except Exception as exc:  # noqa: BLE001 - GCS/Socrata failure
+        log.warning("Historical refresh failed, keeping stale cache: %s", exc)
+
+
+async def _refresh_loop(interval_s: int) -> None:
+    """Background coroutine that calls :func:`refresh` at regular intervals."""
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+            await asyncio.to_thread(refresh)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep the loop alive
+            log.warning("Background refresh loop error: %s", exc)
+
+
+def start_background_refresh(interval_s: Optional[int] = None) -> None:
+    """Start the proactive background refresh task (idempotent)."""
+    global _refresh_task
+    if _refresh_task is not None and not _refresh_task.done():
+        return
+    interval = interval_s if interval_s is not None else REFRESH_INTERVAL_SECONDS
+    _refresh_task = asyncio.create_task(_refresh_loop(interval))
+    log.info("Background refresh started: interval=%ds.", interval)
+
+
+async def stop_background_refresh() -> None:
+    """Cancel the background refresh task, if running."""
+    global _refresh_task
+    if _refresh_task is None:
+        return
+    _refresh_task.cancel()
+    try:
+        await _refresh_task
+    except asyncio.CancelledError:
+        pass
+    _refresh_task = None
 
 
 def prefetch() -> None:

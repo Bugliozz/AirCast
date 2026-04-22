@@ -347,6 +347,16 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
         )
 
     today = date.today()
+    # True when the station has a non-null PM10 row for today — only NRT
+    # (``ykhg-b8rs``) can supply that, so this flag indicates the lag-1
+    # feature reflects T₀ rather than T−1.
+    nrt_available = bool(
+        "pm10" in lag_data.columns
+        and (lag_data["data_giorno"].dt.date == today).any()
+        and lag_data.loc[
+            lag_data["data_giorno"].dt.date == today, "pm10"
+        ].notna().any()
+    )
     predictions: List[Dict[str, Any]] = []
     rolling_lag = lag_data.copy()
 
@@ -398,4 +408,5 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
         "predictions": predictions,
         "data_quality": quality,
         "valid_days_last_7": valid_days,
+        "nrt_available": nrt_available,
     }

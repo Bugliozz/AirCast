@@ -130,7 +130,7 @@ Questa separazione garantisce che chiamate utente a cadenza irregolare non crein
 Un unico container espone sia la REST API (endpoint JSON) sia l'interfaccia web (HTML via Jinja2). Al suo interno:
 
 - `daily_dataset_clean.parquet` (bundled) serve `/stations`, `/history` e fornisce l'anagrafica statica delle stazioni → **nessuna connessione MySQL**
-- `api/services/recent_data.py` scarica i 7 JSON freschi da GCS per calcolare le lag/rolling al volo (cache 15 min)
+- `api/services/recent_data.py` scarica i 7 JSON freschi da GCS per calcolare le lag/rolling al volo (cache storico 24h, NRT di oggi 1h, refresh proattivo in background)
 - `artifacts/*.joblib` (bundled) producono le predizioni
 
 ### Diagramma del flusso runtime
@@ -1067,7 +1067,9 @@ CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT}"]
 | `GCS_BUCKET` | `exam-project-backfill` | Bucket da cui leggere i 7gg freschi |
 | `ARTIFACTS_DIR` | `/app/artifacts` | Path dei `.joblib` |
 | `PARQUET_PATH` | `/app/artifacts/daily_dataset_clean.parquet` | Storico stazioni |
-| `RECENT_CACHE_TTL` | `900` (15 min) | TTL cache finestra 7gg |
+| `HISTORICAL_CACHE_TTL` | `86400` (24h) | TTL cache tier storico (GCS blobs + Socrata gap-fill — immutabili una volta scritti) |
+| `NRT_CACHE_TTL` | `3600` (1h) | TTL cache NRT di oggi (unica parte che cambia entro la giornata) |
+| `REFRESH_INTERVAL_SECONDS` | `NRT_CACHE_TTL` | Cadenza del refresh proattivo in background |
 | `PORT` | `8080` | Iniettato da Cloud Run |
 
 **Service account Cloud Run:**

@@ -20,6 +20,7 @@ class StationOut(BaseModel):
     lon: float
     data_quality: DataQuality = "ok"
     valid_days_last_7: int = 7
+    nrt_available: bool = False
 
 
 class WeatherUsed(BaseModel):
@@ -48,6 +49,7 @@ class ForecastResponse(BaseModel):
     predictions: List[ForecastItem]
     data_quality: DataQuality = "ok"
     valid_days_last_7: int = 7
+    nrt_available: bool = False
 
 
 class HistoryRecord(BaseModel):

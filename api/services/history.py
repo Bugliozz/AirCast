@@ -22,6 +22,7 @@ from api.services import predictor
 from api.services.recent_data import (
     compute_data_quality,
     fetch_recent_window,
+    get_nrt_station_ids,
 )
 from step_3_eda.config import PM10_LABELS, PM10_THRESHOLDS
 
@@ -67,6 +68,7 @@ def get_stations() -> List[StationOut]:
         .first()
         .sort_values("idstazione")
     )
+    nrt_ids = get_nrt_station_ids()
     stations: List[StationOut] = []
     for _, row in meta.iterrows():
         idstazione = str(row["idstazione"])
@@ -86,6 +88,7 @@ def get_stations() -> List[StationOut]:
                 lon=float(row["lng"]),
                 data_quality=quality,
                 valid_days_last_7=valid_days,
+                nrt_available=idstazione in nrt_ids,
             )
         )
     return stations
