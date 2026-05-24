@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% set active_page = 'clusters' %}
+{% block title %}Analisi Cluster Stazioni - PM10 Forecast Lombardia{% endblock %}
+
+{% block content %}
+  <div class="d-flex align-items-baseline gap-3 mb-1">
+    <h1 class="h3 mb-0">Analisi Cluster Stazioni</h1>
+  </div>
+  <p class="text-muted small mb-4">
+    Clustering non supervisionato (KMeans k=2) su 67 stazioni Lombardia &mdash;
+    8 feature: PM10 medio, giorni critici, stagionalit&agrave;, stagnazione, distanza industriale,
+    NO<sub>2</sub>, quota, vento.
+    Silhouette = 0.467 &bull; Kruskal-Wallis PM10: p = 8.4&times;10<sup>&minus;7</sup>.
+  </p>
+
+  {% if not cluster_data %}
+    <div class="alert alert-warning">Dati di clustering non disponibili.</div>
+  {% else %}
+
+  {# --- Cluster cards --- #}
+  <div class="row g-4 mb-4">
+    {% for c in cluster_data %}
+    <div class="col-md-6">
+      <div class="card shadow-sm h-100 border-{{ c.badge_class }} border-2">
+        <div class="card-header bg-{{ c.badge_class }} bg-opacity-10 d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Cluster {{ c.cluster }}</span>
+          <span class="badge bg-{{ c.badge_class }}">{{ c.label }}</span>
+        </div>
+        <div class="card-body">
+          <div class="row text-center g-2 mb-3">
+            <div class="col-4">
+              <div class="fs-4 fw-bold">{{ c.n_stations }}</div>
+              <div class="text-muted small">stazioni</div>
+            </div>
+            <div class="col-4">
+              <div class="fs-4 fw-bold">{{ c.pm10_mean }}</div>
+              <div class="text-muted small">PM10 medio &mu;g/m&sup3;</div>
+            </div>
+            <div class="col-4">
+              <div class="fs-4 fw-bold">{{ c.pct_critical_days }}%</div>
+              <div class="text-muted small">giorni critici</div>
+            </div>
+          </div>
+
+          <table class="table table-sm mb-3">
+            <tbody>
+              <tr>
+                <td class="text-muted">Quota media</td>
+                <td class="text-end">{{ c.quota_mean|int }} m</td>
+              </tr>
+              <tr>
+                <td class="text-muted">Vento medio</td>
+                <td class="text-end">{{ c.wind_speed_mean }} m/s</td>
+              </tr>
+              <tr>
+                <td class="text-muted">NO<sub>2</sub> medio</td>
+                <td class="text-muted small">(traffico/combustione)</td>
+                <td class="text-end">{{ c.no2_mean }} &mu;g/m&sup3;</td>
+              </tr>
+              <tr>
+                <td class="text-muted">Stagionalit&agrave;</td>
+                <td class="text-muted small">(inverno/estate)</td>
+                <td class="text-end">&times;{{ c.seasonality_ratio }}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <details>
+            <summary class="small text-muted" style="cursor:pointer;">
+              Stazioni ({{ c.n_stations }})
+            </summary>
+            <div class="mt-2" style="max-height:200px; overflow-y:auto;">
+              <ul class="list-unstyled mb-0">
+                {% for s in c.stations %}
+                  <li class="small py-1 border-bottom">
+                    <a href="/forecast-ui?station_id={{ s.idstazione }}" class="text-decoration-none">
+                      {{ s.nomestazione }}
+                    </a>
+                    <span class="text-muted">&mdash; {{ s.comune }}</span>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {# --- Feature comparison table --- #}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header fw-semibold">Confronto feature medie per cluster</div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-striped mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              {% for c in cluster_data %}
+                <th class="text-center">
+                  Cluster {{ c.cluster }}
+                  <span class="badge bg-{{ c.badge_class }} ms-1">{{ c.label }}</span>
+                </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>PM10 medio (&mu;g/m&sup3;)</td>
+              {% for c in cluster_data %}<td class="text-center fw-semibold">{{ c.pm10_mean }}</td>{% endfor %}
+            </tr>
+            <tr>
+              <td>Giorni critici (arancio+rosso)</td>
+              {% for c in cluster_data %}<td class="text-center">{{ c.pct_critical_days }}%</td>{% endfor %}
+            </tr>
+            <tr>
+              <td>Quota media (m)</td>
+              {% for c in cluster_data %}<td class="text-center">{{ c.quota_mean|int }}</td>{% endfor %}
+            </tr>
+            <tr>
+              <td>Vento medio (m/s)</td>
+              {% for c in cluster_data %}<td class="text-center">{{ c.wind_speed_mean }}</td>{% endfor %}
+            </tr>
+            <tr>
+              <td>NO<sub>2</sub> medio (&mu;g/m&sup3;)</td>
+              {% for c in cluster_data %}<td class="text-center">{{ c.no2_mean }}</td>{% endfor %}
+            </tr>
+            <tr>
+              <td>Stagionalit&agrave; (inverno/estate)</td>
+              {% for c in cluster_data %}<td class="text-center">&times;{{ c.seasonality_ratio }}</td>{% endfor %}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# --- Methodology note --- #}
+  <div class="alert alert-secondary small">
+    <strong>Nota metodologica</strong> &mdash;
+    I cluster sono stati costruiti su profili stazione aggregati (media su tutti i giorni disponibili 2024-2026).
+    La validazione esterna vs provincia (ARI=0.038) conferma che i cluster catturano
+    <em>profili di inquinamento</em>, non confini amministrativi.
+    La separazione tra cluster risulta altamente significativa (Kruskal-Wallis p&lt;0.001).
+  </div>
+
+  {% endif %}
+{% endblock %}

@@ -48,6 +48,20 @@
     <div class="alert alert-danger">{{ error }}</div>
   {% endif %}
 
+  {% if cluster_info %}
+    <div class="mb-3">
+      <a href="/clusters"
+         class="badge bg-{{ cluster_info.badge_class }} bg-opacity-75 text-decoration-none"
+         title="PM10 medio: {{ cluster_info.pm10_mean }} µg/m³ — Giorni critici: {{ cluster_info.pct_critical_days }}%">
+        Cluster {{ cluster_info.cluster }} &mdash; {{ cluster_info.label }}
+      </a>
+      <span class="text-muted small ms-2">
+        PM10 medio cluster: {{ cluster_info.pm10_mean }} &mu;g/m&sup3; &bull;
+        Giorni critici: {{ cluster_info.pct_critical_days }}%
+      </span>
+    </div>
+  {% endif %}
+
   {% if chart_data %}
     <div class="card shadow-sm mb-3">
       <div class="card-body">

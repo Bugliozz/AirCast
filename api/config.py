@@ -88,3 +88,23 @@ SENSORS_REGISTRY_PATH = _resolve_path(
         ]
     ),
 )
+
+CLUSTERS_CSV_PATH = _resolve_path(
+    os.environ.get("CLUSTERS_CSV_PATH"),
+    _first_existing(
+        [
+            ARTIFACTS_DIR / "station_clusters.csv",
+            ROOT_DIR / "step_6_clustering" / "artifacts" / "station_clusters.csv",
+        ]
+    ),
+)
+
+CLUSTER_INTERPRETATION_PATH = _resolve_path(
+    os.environ.get("CLUSTER_INTERPRETATION_PATH"),
+    _first_existing(
+        [
+            ARTIFACTS_DIR / "cluster_interpretation.json",
+            ROOT_DIR / "step_6_clustering" / "artifacts" / "cluster_interpretation.json",
+        ]
+    ),
+)

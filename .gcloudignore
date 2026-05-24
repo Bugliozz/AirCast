@@ -39,3 +39,9 @@ step_5_classification/artifacts/**
 !step_5_classification/artifacts/
 !step_5_classification/artifacts/xgboost_hybrid_calibrated.joblib
 !step_5_classification/artifacts/hybrid_params.json
+
+step_6_clustering/**
+!step_6_clustering/
+!step_6_clustering/artifacts/
+!step_6_clustering/artifacts/station_clusters.csv
+!step_6_clustering/artifacts/cluster_interpretation.json

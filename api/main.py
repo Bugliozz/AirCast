@@ -13,9 +13,11 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from api.routers.clusters import router as clusters_router
 from api.routers.forecast import router as forecast_router
 from api.routers.history import router as history_router
 from api.routers.stations import router as stations_router
+from api.services import clusters as clusters_service
 from api.services import history as history_service
 from api.services import map_view, predictor, recent_data
 
@@ -52,6 +54,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(stations_router)
 app.include_router(forecast_router)
 app.include_router(history_router)
+app.include_router(clusters_router)
 
 
 @app.get("/health")
@@ -80,6 +83,7 @@ def forecast_ui_get(request: Request) -> HTMLResponse:
             "error": None,
             "selected_station": None,
             "selected_days": 1,
+            "cluster_info": None,
         },
     )
 
@@ -110,6 +114,7 @@ def forecast_ui_post(
             "error": error,
             "selected_station": station_id,
             "selected_days": days,
+            "cluster_info": clusters_service.get_station_cluster_info(station_id),
         },
     )
 
@@ -133,6 +138,7 @@ def history_ui_get(request: Request) -> HTMLResponse:
             "selected_station": None,
             "from_date": default_from.isoformat(),
             "to_date": latest.isoformat(),
+            "cluster_info": None,
         },
     )
 
@@ -185,5 +191,6 @@ def history_ui_post(
             "selected_station": station_id,
             "from_date": from_date,
             "to_date": to_date,
+            "cluster_info": clusters_service.get_station_cluster_info(station_id),
         },
     )

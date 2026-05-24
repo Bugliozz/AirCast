@@ -55,6 +55,13 @@
             &#9679; LIVE
           </span>
         {% endif %}
+        {% if cluster_info %}
+          <a href="/clusters"
+             class="badge bg-{{ cluster_info.badge_class }} bg-opacity-75 ms-2 text-decoration-none"
+             title="PM10 medio: {{ cluster_info.pm10_mean }} µg/m³ — Giorni critici: {{ cluster_info.pct_critical_days }}%">
+            Cluster {{ cluster_info.cluster }} &mdash; {{ cluster_info.label }}
+          </a>
+        {% endif %}
       </h2>
       <p class="disclaimer mb-0">Stazione ID {{ result.station_id }}</p>
     </div>
