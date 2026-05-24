@@ -32,6 +32,9 @@ air_quality_data/
 *.json
 *.csv
 *.parquet
+# Clustering artifacts needed by the API (small, committed for Cloud Run deploy)
+!artifacts/station_clusters.csv
+!artifacts/cluster_interpretation.json
 
 # Secrets & env
 .env
