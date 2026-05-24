@@ -20,17 +20,16 @@ import os
 import re
 import time
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from google.cloud import storage as gcs
 
+from api.config import GCS_BUCKET, SENSORS_REGISTRY_PATH
 from api.services import live_arpa
 
 log = logging.getLogger(__name__)
 
-GCS_BUCKET = os.environ.get("GCS_BUCKET", "exam-project-backfill")
 GCS_DATA_PREFIX = "data/raw"
 WINDOW_DAYS = int(os.environ.get("WINDOW_DAYS", "7"))
 END_OFFSET_DAYS = int(os.environ.get("END_OFFSET_DAYS", "1"))
@@ -43,8 +42,7 @@ NRT_CACHE_TTL = int(os.environ.get("NRT_CACHE_TTL", "3600"))  # 1h
 # never goes stale without a proactive refetch.
 REFRESH_INTERVAL_SECONDS = int(os.environ.get("REFRESH_INTERVAL_SECONDS", str(NRT_CACHE_TTL)))
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
-_SENSORS_REGISTRY_PATH = _ROOT / "data" / "raw" / "sensors_registry.json"
+_SENSORS_REGISTRY_PATH = SENSORS_REGISTRY_PATH
 
 _gcs_client: Optional[gcs.Client] = None
 _sensors_map: Optional[pd.DataFrame] = None

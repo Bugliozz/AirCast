@@ -48,8 +48,21 @@ from step_5_classification.config import (
     TARGET_COL,
     XGBOOST_PARAM_DIST,
 )
+from step_5_classification.guardrails import (
+    assert_cv_guardrails,
+    assert_manifest_guardrails,
+    assert_randomized_search_seed,
+    build_model_manifest_entry,
+    build_split_metadata,
+    write_json,
+)
 
 logger = logging.getLogger(__name__)
+
+DATE_COL = "data_giorno"
+STATION_COL = "idstazione"
+SPLIT_ROW_ID_COL = "__split_row_id"
+MODEL_NAMES = ("logistic_regression", "random_forest", "xgboost")
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +290,11 @@ def train_random_forest(
         random_state=RANDOM_STATE,
         verbose=1,
     )
+    assert_randomized_search_seed(
+        search,
+        expected_random_state=RANDOM_STATE,
+        search_name="RandomForest",
+    )
     search.fit(X_train, y_train)
 
     logger.info("RandomForest best params:    %s", search.best_params_)
@@ -327,6 +345,11 @@ def train_xgboost(
         random_state=RANDOM_STATE,
         verbose=1,
     )
+    assert_randomized_search_seed(
+        search,
+        expected_random_state=RANDOM_STATE,
+        search_name="XGBoost",
+    )
     search.fit(X_train, y_train, classifier__sample_weight=sample_weights)
 
     logger.info("XGBoost best params:    %s", search.best_params_)
@@ -366,10 +389,33 @@ def run_training(parquet_path: str) -> Dict[str, object]:
         "Loaded dataset: %d rows, %d columns from '%s'",
         len(df), df.shape[1], parquet_path,
     )
+    if SPLIT_ROW_ID_COL in df.columns:
+        raise ValueError(f"Reserved split column already exists: {SPLIT_ROW_ID_COL}")
+    if DATE_COL not in df.columns:
+        raise ValueError(f"Required date column not found: {DATE_COL}")
+    if STATION_COL not in df.columns:
+        raise ValueError(f"Required station column not found: {STATION_COL}")
+
+    df = df.copy()
+    df[SPLIT_ROW_ID_COL] = np.arange(len(df), dtype=np.int64)
 
     # 2. Temporal train/test split
     X_train, y_train, X_test, y_test, train_dates = temporal_train_test_split(
         df, target_col=TARGET_COL, drop_cols=DROP_COLS,
+    )
+    train_indices = X_train.pop(SPLIT_ROW_ID_COL).astype(int).reset_index(drop=True)
+    test_indices = X_test.pop(SPLIT_ROW_ID_COL).astype(int).reset_index(drop=True)
+    test_dates = (
+        df.iloc[test_indices.to_numpy()][DATE_COL]
+        .reset_index(drop=True)
+    )
+    train_stations = (
+        df.iloc[train_indices.to_numpy()][STATION_COL]
+        .reset_index(drop=True)
+    )
+    test_stations = (
+        df.iloc[test_indices.to_numpy()][STATION_COL]
+        .reset_index(drop=True)
     )
 
     # 3. Encode labels: string -> ordinal int via LABEL_MAP
@@ -387,11 +433,43 @@ def run_training(parquet_path: str) -> Dict[str, object]:
         valid_train = y_train.notna()
         X_train, y_train = X_train[valid_train].reset_index(drop=True), y_train[valid_train].reset_index(drop=True)
         train_dates = train_dates[valid_train].reset_index(drop=True)
+        train_indices = train_indices[valid_train].reset_index(drop=True)
+        train_stations = train_stations[valid_train].reset_index(drop=True)
         valid_test = y_test.notna()
         X_test, y_test = X_test[valid_test].reset_index(drop=True), y_test[valid_test].reset_index(drop=True)
+        test_dates = test_dates[valid_test].reset_index(drop=True)
+        test_indices = test_indices[valid_test].reset_index(drop=True)
+        test_stations = test_stations[valid_test].reset_index(drop=True)
 
     y_train = y_train.astype(int)
     y_test = y_test.astype(int)
+
+    max_train_date = pd.to_datetime(train_dates, errors="raise").max()
+    min_test_date = pd.to_datetime(test_dates, errors="raise").min()
+    assert max_train_date < min_test_date, (
+        "Temporal leakage detected after temporal_train_test_split: "
+        f"max(data_giorno_train)={max_train_date} >= "
+        f"min(data_giorno_test)={min_test_date}"
+    )
+
+    split_metadata = build_split_metadata(
+        train_dates=train_dates,
+        test_dates=test_dates,
+        train_stations=train_stations,
+        test_stations=test_stations,
+        train_indices=train_indices,
+        test_indices=test_indices,
+    )
+    logger.info(
+        "Guard-rail split OK: train %s -> %s | test %s -> %s | stations %d/%d/%d",
+        split_metadata["train_date_range"][0],
+        split_metadata["train_date_range"][1],
+        split_metadata["test_date_range"][0],
+        split_metadata["test_date_range"][1],
+        split_metadata["n_stations_train"],
+        split_metadata["n_stations_test"],
+        split_metadata["n_stations_intersection"],
+    )
 
     logger.info(
         "Label distribution (train): %s",
@@ -412,12 +490,24 @@ def run_training(parquet_path: str) -> Dict[str, object]:
     cv_splits = make_temporal_cv_splits(
         X_train_with_dates, y_train, n_splits=N_CV_SPLITS,
     )
+    cv_metadata = assert_cv_guardrails(
+        cv_splits,
+        expected_n_splits=N_CV_SPLITS,
+    )
+    logger.info(
+        "Guard-rail CV OK: %d folds, signature=%s",
+        cv_metadata["n_splits"],
+        cv_metadata["cv_signature_hash"],
+    )
 
     # Ensure artifacts directory exists
     artifacts_dir = Path(ARTIFACTS_DIR)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    write_json(artifacts_dir / "split_metadata.json", split_metadata)
+    logger.info("Saved split metadata -> %s", artifacts_dir / "split_metadata.json")
 
     trained_models: Dict[str, object] = {}
+    model_artifacts: Dict[str, Dict[str, object]] = {}
 
     # 6. Logistic Regression
     logger.info("=== Logistic Regression ===")
@@ -426,6 +516,12 @@ def run_training(parquet_path: str) -> Dict[str, object]:
 
     lr_path = artifacts_dir / "logistic_regression_best.joblib"
     joblib.dump(lr_search.best_estimator_, lr_path)
+    model_artifacts["logistic_regression"] = build_model_manifest_entry(
+        artifact_path=lr_path,
+        split_metadata=split_metadata,
+        cv_metadata=cv_metadata,
+        random_state=RANDOM_STATE,
+    )
     logger.info("Saved best Logistic Regression pipeline -> %s", lr_path)
 
     # 7. Random Forest Classifier
@@ -435,6 +531,12 @@ def run_training(parquet_path: str) -> Dict[str, object]:
 
     rf_path = artifacts_dir / "random_forest_best.joblib"
     joblib.dump(rf_search.best_estimator_, rf_path)
+    model_artifacts["random_forest"] = build_model_manifest_entry(
+        artifact_path=rf_path,
+        split_metadata=split_metadata,
+        cv_metadata=cv_metadata,
+        random_state=RANDOM_STATE,
+    )
     logger.info("Saved best Random Forest pipeline -> %s", rf_path)
 
     # 8. XGBoost Classifier
@@ -444,6 +546,12 @@ def run_training(parquet_path: str) -> Dict[str, object]:
 
     xgb_path = artifacts_dir / "xgboost_best.joblib"
     joblib.dump(xgb_search.best_estimator_, xgb_path)
+    model_artifacts["xgboost"] = build_model_manifest_entry(
+        artifact_path=xgb_path,
+        split_metadata=split_metadata,
+        cv_metadata=cv_metadata,
+        random_state=RANDOM_STATE,
+    )
     logger.info("Saved best XGBoost pipeline -> %s", xgb_path)
 
     # 9. Select best model across all three by CV f1_macro
@@ -460,20 +568,62 @@ def run_training(parquet_path: str) -> Dict[str, object]:
 
     best_path = artifacts_dir / "best_model.joblib"
     joblib.dump(best_search.best_estimator_, best_path)
+    model_artifacts["best_model"] = build_model_manifest_entry(
+        artifact_path=best_path,
+        split_metadata=split_metadata,
+        cv_metadata=cv_metadata,
+        random_state=RANDOM_STATE,
+    )
     logger.info("Saved overall best model -> %s", best_path)
 
     # Also persist X_test/y_test for evaluate.py
     test_path = artifacts_dir / "test_data.joblib"
-    joblib.dump({"X_test": X_test, "y_test": y_test}, test_path)
+    joblib.dump(
+        {
+            "X_test": X_test,
+            "y_test": y_test,
+            "test_dates": test_dates,
+            "test_indices": test_indices,
+            "split_metadata": split_metadata,
+            "cv_metadata": cv_metadata,
+        },
+        test_path,
+    )
     logger.info("Saved test data -> %s", test_path)
 
     # Persist X_train/y_train/train_dates for calibrate.py (step 5.5)
     train_path = artifacts_dir / "train_data.joblib"
     joblib.dump(
-        {"X_train": X_train, "y_train": y_train, "train_dates": train_dates},
+        {
+            "X_train": X_train,
+            "y_train": y_train,
+            "train_dates": train_dates,
+            "train_indices": train_indices,
+            "split_metadata": split_metadata,
+            "cv_metadata": cv_metadata,
+        },
         train_path,
     )
     logger.info("Saved train data -> %s", train_path)
+
+    training_manifest = {
+        "random_state": RANDOM_STATE,
+        "best_model": best_name,
+        "split_metadata": split_metadata,
+        "cv_metadata": cv_metadata,
+        "model_artifacts": model_artifacts,
+    }
+    assert_manifest_guardrails(
+        training_manifest,
+        artifacts_dir=artifacts_dir,
+        model_names=MODEL_NAMES + ("best_model",),
+        expected_n_splits=N_CV_SPLITS,
+        expected_random_state=RANDOM_STATE,
+        verify_files=True,
+    )
+    manifest_path = artifacts_dir / "training_manifest.json"
+    write_json(manifest_path, training_manifest)
+    logger.info("Saved training manifest -> %s", manifest_path)
 
     return trained_models
 

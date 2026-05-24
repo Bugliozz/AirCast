@@ -10,7 +10,7 @@ time order and avoid leakage. Class imbalance is handled via class_weight="balan
 and compute_sample_weight for XGBoost.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 # ---------------------------------------------------------------------------
 # Alert class label encoding (ordinal severity order)
@@ -21,6 +21,15 @@ LABEL_MAP: Dict[str, int] = {
     "arancio": 2,
     "rosso": 3,
 }
+
+# ---------------------------------------------------------------------------
+# Alert thresholds and hybrid strategy settings
+# ---------------------------------------------------------------------------
+ALERT_THRESHOLDS: List[float] = [20.0, 35.0, 50.0]
+HYBRID_DELTA_GRID: List[float] = [3.0, 5.0, 7.0]
+HYBRID_PROB_GRID: List[float] = [0.25, 0.35, 0.45]
+HYBRID_ALPHA: float = 1.0
+HYBRID_BETA: float = 0.5
 
 # ---------------------------------------------------------------------------
 # Target and drop columns

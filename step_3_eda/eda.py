@@ -42,9 +42,13 @@ from step_3_eda.plots import (
     plot_pm10_distribution,
     plot_pm10_monthly,
     plot_pm10_timeseries,
+    plot_rmt_eigenvalue_spectrum,
+    plot_rmt_null_comparison,
+    plot_rmt_top_loadings,
     plot_stagnation_vs_pm10,
     plot_weather_vs_pm10,
 )
+from step_3_eda.rmt import run_rmt_diagnostic, save_rmt_artifacts
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,11 +111,31 @@ def main() -> None:
         top_corr = top_correlations(df)
         log.info("\n%s", top_corr.to_string())
 
+        log.info("RMT spectral diagnostic")
+        rmt_result = None
+        try:
+            rmt_result = run_rmt_diagnostic(df)
+            save_rmt_artifacts(rmt_result, output_dir)
+            rmt_summary = rmt_result["summary"]
+            log.info(
+                "RMT summary: %d/%d components above MP bulk; "
+                "%.1f%% variance explained by MP-significant components.",
+                rmt_summary["n_components_above_mp"],
+                rmt_summary["n_features"],
+                rmt_summary["variance_explained_above_mp"] * 100,
+            )
+        except ValueError as exc:
+            log.warning("Skipping RMT diagnostic: %s", exc)
+
         # ── 6. Plots ────────────────────────────────────────────────────────
         log.info("─── Generating plots ───")
         plot_pm10_distribution(df, PLOTS_DIR)
         plot_class_distribution(df, PLOTS_DIR)
         plot_correlation_heatmap(df, PLOTS_DIR)
+        if rmt_result is not None:
+            plot_rmt_eigenvalue_spectrum(rmt_result["eigenvalues"], rmt_result["summary"], PLOTS_DIR)
+            plot_rmt_top_loadings(rmt_result["loadings"], PLOTS_DIR)
+            plot_rmt_null_comparison(rmt_result["eigenvalues"], rmt_result["summary"], PLOTS_DIR)
         plot_pm10_timeseries(df, PLOTS_DIR)
         plot_pm10_by_season(df, PLOTS_DIR)
         plot_pm10_by_weekday(df, PLOTS_DIR)

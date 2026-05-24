@@ -19,10 +19,15 @@ scikit-learn>=1.4
 xgboost>=2.0
 joblib
 
+# step_6_clustering / api map
+folium>=0.14
+
 # step_6_api
 fastapi>=0.110
 pydantic>=2.0
 uvicorn[standard]>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
 
 # scripts/sync_gcs.py
 google-cloud-storage>=2.14

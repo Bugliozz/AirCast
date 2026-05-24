@@ -394,3 +394,136 @@ def plot_no2_hourly_profile(no2_hourly: pd.DataFrame, out: Path) -> None:
     ax.set_xticks(range(24))
     ax.legend(title="")
     _savefig(fig, out / "13_no2_hourly_profile.png")
+
+
+# -----------------------------------------------------------------------------
+# 14-16 - Random Matrix Theory spectral diagnostics
+# -----------------------------------------------------------------------------
+
+def plot_rmt_eigenvalue_spectrum(
+    eigenvalues: pd.DataFrame,
+    summary: dict,
+    out: Path,
+) -> None:
+    """Eigenvalue spectrum of the feature correlation matrix with MP bounds."""
+    if eigenvalues.empty:
+        log.warning("RMT eigenvalue table is empty - skipping plot 14.")
+        return
+
+    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
+    x = eigenvalues["component"]
+    y = eigenvalues["eigenvalue"]
+    above = eigenvalues["above_mp_bulk"]
+
+    ax.plot(x, y, marker="o", ms=4, lw=1.2, color="#355C7D", label="Observed spectrum")
+    if above.any():
+        ax.scatter(
+            x[above],
+            y[above],
+            s=45,
+            color="#D62828",
+            zorder=3,
+            label="Above MP bulk",
+        )
+
+    if "empirical_null_rank_p95" in eigenvalues.columns:
+        ax.plot(
+            x,
+            eigenvalues["empirical_null_rank_p95"],
+            ls="--",
+            lw=1.1,
+            color="#6C757D",
+            label="Empirical null p95",
+        )
+
+    ax.axhline(
+        summary["lambda_plus_mp"],
+        ls=":",
+        lw=1.4,
+        color="#E76F51",
+        label=f"MP lambda+ = {summary['lambda_plus_mp']:.3f}",
+    )
+    ax.axhline(
+        summary["lambda_minus_mp"],
+        ls=":",
+        lw=1.0,
+        color="#2A9D8F",
+        label=f"MP lambda- = {summary['lambda_minus_mp']:.3f}",
+    )
+
+    ax.set_title("RMT eigenvalue spectrum")
+    ax.set_xlabel("Component rank")
+    ax.set_ylabel("Eigenvalue")
+    ax.set_xlim(0.5, len(eigenvalues) + 0.5)
+    ax.legend(fontsize=8)
+    _savefig(fig, out / "14_rmt_eigenvalue_spectrum.png")
+
+
+def plot_rmt_top_loadings(loadings: pd.DataFrame, out: Path) -> None:
+    """Top feature loadings for the leading RMT signal components."""
+    if loadings.empty:
+        log.warning("RMT loading table is empty - skipping plot 15.")
+        return
+
+    components = loadings["component"].drop_duplicates().tolist()
+    fig, axes = plt.subplots(
+        len(components),
+        1,
+        figsize=(13, max(4, 3.2 * len(components))),
+        squeeze=False,
+    )
+    axes = axes.flatten()
+
+    for ax, component in zip(axes, components):
+        subset = (
+            loadings[loadings["component"] == component]
+            .sort_values("abs_loading", ascending=True)
+        )
+        colors = np.where(subset["loading"] >= 0, "#457B9D", "#E76F51")
+        ax.barh(subset["feature"], subset["loading"], color=colors)
+        eigenvalue = subset["eigenvalue"].iloc[0]
+        marker = "MP signal" if subset["component_above_mp"].iloc[0] else "top component"
+        ax.set_title(f"Component {component} - {marker} - eigenvalue {eigenvalue:.2f}")
+        ax.set_xlabel("Eigenvector loading")
+        ax.axvline(0, color="black", lw=0.8)
+
+    fig.tight_layout()
+    _savefig(fig, out / "15_rmt_top_eigenvector_loadings.png")
+
+
+def plot_rmt_null_comparison(
+    eigenvalues: pd.DataFrame,
+    summary: dict,
+    out: Path,
+) -> None:
+    """Compare leading observed eigenvalues with empirical null quantiles."""
+    required = {"empirical_null_rank_p95", "empirical_null_rank_p99"}
+    if eigenvalues.empty or not required.issubset(eigenvalues.columns):
+        log.warning("RMT empirical null columns missing - skipping plot 16.")
+        return
+
+    top = eigenvalues.head(min(15, len(eigenvalues))).copy()
+    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
+    x = np.arange(len(top))
+
+    ax.bar(
+        x,
+        top["eigenvalue"],
+        color=np.where(top["above_empirical_p95"], "#D62828", "#8ECAE6"),
+        edgecolor="white",
+        label="Observed eigenvalue",
+    )
+    ax.plot(x, top["empirical_null_rank_p95"], marker="o", lw=1.2, color="#6C757D", label="Null p95")
+    ax.plot(x, top["empirical_null_rank_p99"], marker="s", lw=1.2, color="#343A40", label="Null p99")
+    ax.axhline(summary["lambda_plus_mp"], ls=":", color="#E76F51", lw=1.3, label="MP lambda+")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(top["component"].astype(str))
+    ax.set_title(
+        "RMT observed spectrum vs empirical null "
+        f"({summary['empirical_null_method']}, n={summary['n_null_iterations']})"
+    )
+    ax.set_xlabel("Component rank")
+    ax.set_ylabel("Eigenvalue")
+    ax.legend(fontsize=8)
+    _savefig(fig, out / "16_rmt_empirical_null_comparison.png")

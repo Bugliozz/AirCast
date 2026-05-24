@@ -570,7 +570,7 @@ Insert idempotente via `INSERT IGNORE` (safe per ri-esecuzioni parziali).
 
 ## 10. Step 3 — Feature Engineering & EDA
 
-**Moduli:** `step_3_eda/build_dataset.py`, `step_3_eda/eda.py`
+**Moduli:** `step_3_eda/build_dataset.py`, `step_3_eda/eda.py`, `step_3_eda/rmt.py`
 
 ### build_dataset.py — Flusso
 
@@ -583,21 +583,44 @@ clean_dataset() → save daily_dataset_clean.parquet
 
 Output `step_3_eda/daily_dataset_clean.parquet`:
 - Granularità: 1 riga per stazione per giorno
-- Periodo: gennaio 2024 – marzo 2026 
-- ~7.000–10.000 righe (post-pulizia)
-- Colonne: ~65–75 (feature + target + identificatori)
+- Periodo: gennaio 2024 – maggio 2026
+- 54.595 righe (post-pulizia)
+- 53 colonne (feature + target + identificatori)
 
 ### eda.py — Analisi Eseguita
 
-13 plot salvati in `step_3_eda/plots/`:
+16 plot salvati in `step_3_eda/plots/`:
 - Distribuzione PM10 e distribuzione classi di allerta
 - Heatmap di correlazione completa
+- Diagnostica RMT: spettro autovalori, loadings degli autovettori, confronto con null empirico
 - Serie temporale PM10 per stazione
 - PM10 per stagione, giorno della settimana, mese, provincia
 - Scatter meteo vs PM10 (temperatura, umidità, vento, pressione)
 - Stagnation index vs PM10
 - Prossimità industriale vs PM10
 - Profilo orario NO2 (proxy traffico)
+
+### rmt.py â€” Diagnostica Random Matrix Theory
+
+Obiettivo: affiancare alla correlazione Pearson pairwise una lettura globale
+della matrice di correlazione tra feature. Le feature numeriche vengono
+standardizzate, escludendo target (`pm10`, `classe_allerta`), identificatori e
+ordinali calendario grezzi (`mese`, `giorno_settimana`) quando sono gia'
+presenti encoding ciclici.
+
+Output generati:
+- `step_3_eda/rmt_summary.json`
+- `step_3_eda/rmt_eigenvalues.csv`
+- `step_3_eda/rmt_component_loadings.csv`
+- `step_3_eda/plots/14_rmt_eigenvalue_spectrum.png`
+- `step_3_eda/plots/15_rmt_top_eigenvector_loadings.png`
+- `step_3_eda/plots/16_rmt_empirical_null_comparison.png`
+
+Interpretazione corrente: su 41 feature numeriche selezionate, 9 componenti
+sono sopra il bulk Marchenko-Pastur (`lambda+ = 1.056`) e spiegano circa il
+74.0% della varianza spettrale. Il confronto empirico usa uno
+`grouped_circular_shift` per stazione, cosi' il null conserva parte della
+struttura temporale/stazione ma rompe l'allineamento cross-feature.
 
 ---
 
@@ -712,7 +735,7 @@ La relazione PM10 ↔ meteo è intrinsecamente non lineare (soglie, interazioni,
 
 ---
 
-## 12. Step 5 — Classificazione Allerta (da implementare)
+## 12. Step 5 — Classificazione Allerta ✅
 
 **Modulo:** `step_5_classification/`
 
@@ -784,9 +807,105 @@ StandardScaler → LogisticRegression(penalty='elasticnet', solver='saga', class
 
 ---
 
-## 13. Step 6 — FastAPI monolitica (API + Frontend)
+## 13. Step 6 — Clustering Stazioni ✅
 
-### 13.1 Architettura
+### 13.1 Obiettivo
+
+Raggruppare le 67 stazioni di monitoraggio in profili omogenei (livello inquinamento, stagionalità, contesto topografico/meteo) per orientare la gestione del territorio. Il clustering opera su aggregati stazione-livello derivati dal dataset giornaliero pulito (`step_3_eda/daily_dataset_clean.parquet`).
+
+### 13.2 Profili Stazione (`profiles.py`)
+
+Ogni stazione viene rappresentata da **8 feature aggregate** calcolate su tutti i giorni disponibili:
+
+| Feature | Tipo | Motivazione |
+|---|---|---|
+| `pm10_mean` | Livello medio | Indicatore primario della qualità dell'aria |
+| `pct_critical_days` | Frequenza | % giorni con `classe_allerta` ∈ {arancio, rosso} |
+| `seasonality_ratio` | Stagionalità | PM10 invernale / PM10 estivo |
+| `stagnation_index_mean` | Meteo | Proxy di ristagno atmosferico medio |
+| `dist_industrial_km` | Sorgente | Distanza da sorgenti industriali |
+| `no2_mean` | Traffico/combustione | Tracciante di emissioni veicolari |
+| `quota` | Topografia | Effetto di diluzione con l'altitudine |
+| `wind_speed_mean` | Meteo | Capacità dispersiva media |
+
+**O3 escluso — motivazione:** Soltanto 37/67 stazioni (55%) misurano l'ozono; includerlo avrebbe richiesto l'imputazione del 45% dei valori, introducendo rumore sistematico inaccettabile nel profilo stazione. NO2 è mantenuto perché disponibile in 66/67 stazioni (una sola imputazione con mediana di provincia).
+
+**Scaling:** `RobustScaler` sull'intera popolazione N=67 (non esiste train/test split nel clustering non supervisionato). Rispetto allo StandardScaler, il RobustScaler è più robusto agli outlier: con N piccolo anche una singola stazione atipica può distorcere media e deviazione standard.
+
+Valori mancanti residui su `quota` e `no2_mean` imputati con mediana di provincia, fallback mediana globale.
+
+### 13.3 Scelta dell'Algoritmo e di k
+
+#### 13.3.1 Candidati primari: KMeans e Agglomerative (Ward)
+
+Con N=67 stazioni, KMeans e Agglomerative (Ward) sono i candidati naturali:
+
+- **KMeans** garantisce cluster bilanciati ed è facilmente interpretabile tramite centroidi; `n_init=10` riduce la dipendenza dall'inizializzazione casuale.
+- **Agglomerative (Ward)** minimizza la varianza intra-cluster e produce un dendrogramma che supporta la scelta visiva di k.
+
+Entrambi vengono valutati su k ∈ [2, 8]. La selezione del modello finale massimizza il silhouette score escludendo le partizioni degenerate (cluster con meno del 25% della dimensione attesa N/k, minimo assoluto 3 stazioni).
+
+#### 13.3.2 DBSCAN — solo confronto
+
+DBSCAN è eseguito su `eps` ∈ {0.5, 0.75, 1.0, 1.25, 1.5} con `min_samples=3`. Con N=67, la funzione di densità locale è instabile: pochi punti determinano il confine tra core point e rumore, e il silhouette score varia in modo erratico al variare di eps. DBSCAN **non partecipa alla selezione del modello finale**; i risultati sono conservati in `clustering_metrics.json["dbscan"]` esclusivamente a scopo comparativo.
+
+#### 13.3.3 Selezione finale
+
+```
+best(algo, k) = argmax silhouette  ∀ (algo, k) ∈ {kmeans, agglomerative} × [2, 8]
+                filtrato da: cluster_size ≥ max(3, round(N/k × 0.25))
+```
+
+Artefatti prodotti: `scaler.joblib`, `kmeans_best.joblib`, `agglomerative_best.joblib`, `linkage_matrix.npy`, `station_clusters.csv`, `clustering_metrics.json`.
+
+### 13.4 Validazione
+
+#### 13.4.1 Validazione esterna indipendente — `provincia` + severità continua
+
+I cluster vengono confrontati con la suddivisione geografica per **provincia** tramite metriche di cluster esterni:
+
+| Metrica | Descrizione |
+|---|---|
+| `adjusted_rand_score` | Accordo corretto per chance (range −1…1) |
+| `homogeneity` | Ogni cluster contiene stazioni di poche province |
+| `completeness` | Ogni provincia è concentrata in pochi cluster |
+| `v_measure` | Media armonica di homogeneity e completeness |
+
+La `provincia` è indipendente dal feature set: non è mai usata come input del clustering.
+
+La **separazione della severità** è verificata con il test di Kruskal-Wallis su `pm10_mean` e `pct_critical_days` per cluster. p < 0.05 implica che i cluster catturano differenze reali di livello inquinamento.
+
+#### 13.4.2 Caveat circolarità — `classe_allerta` (NON indipendente)
+
+L'omogeneità dei cluster rispetto alla `classe_allerta` dominante per stazione è riportata in `clustering_metrics.json["circularity_caveat"]` con il flag `"non_independent": true`.
+
+**Motivazione:** `classe_allerta` è derivata direttamente dalle soglie su PM10 — lo stesso segnale che guida `pm10_mean` nel feature set. Usarla come etichetta di validazione costituisce una circolarità e non fornisce evidenza indipendente della validità dei cluster. È mantenuta solo come check di sanità interna, **non come prova di validità**.
+
+### 13.5 Interpretazione dei Cluster
+
+I valori medi (scala originale) di ogni feature per cluster sono salvati in `step_6_clustering/artifacts/cluster_interpretation.csv` e `.json`. I profili tipici attesi:
+
+- **Cluster alta criticità** — `pm10_mean` elevato, `pct_critical_days` alto, `seasonality_ratio` > 1 (problema prevalentemente invernale), `quota` bassa, `dist_industrial_km` ridotta.
+- **Cluster costiero/ventilato** — `wind_speed_mean` elevato, `stagnation_index_mean` basso, `pm10_mean` moderato.
+- **Cluster alta quota/montagna** — `quota` elevata, `pm10_mean` basso, `seasonality_ratio` vicina a 1 (assenza di picco invernale marcato).
+
+Visualizzazioni disponibili in `step_6_clustering/artifacts/plots/`: elbow curve, silhouette vs k, dendrogramma Ward (67 stazioni), k-distance DBSCAN, PCA 2D cluster, heatmap profili standardizzati, boxplot PM10 per cluster. Mappa interattiva: `step_6_clustering/artifacts/cluster_map.html`.
+
+### 13.6 Limiti — N Piccolo (N=67)
+
+| Limite | Impatto | Mitigazione adottata |
+|---|---|---|
+| Instabilità centroidi KMeans | Varianza alta al variare del seed | `n_init=10`, `random_state=42` |
+| Silhouette e ARI sensibili agli outlier | Stazioni atipiche distorcono le metriche | RobustScaler; interpretability guard (25% N/k) |
+| DBSCAN inapplicabile | Densità locale indefinita con N piccolo | DBSCAN solo confronto, non selezione |
+| Validazione esterna debole vs `provincia` | Province lombarde non si mappano 1:1 su cluster di qualità dell'aria | Severità continua (Kruskal-Wallis) come validazione primaria |
+| Generalizzazione limitata | Profili derivati da 67 stazioni specifiche | Nessuna inferenza causale; risultati descrittivi |
+
+---
+
+## 14. Step 7 — FastAPI monolitica (API + Frontend)
+
+### 14.1 Architettura
 
 ```
 ┌───────────────────────────────────────────────────┐
@@ -817,7 +936,7 @@ Scelta coerente con il feedback del docente ("use FastAPI to deliver both backen
 
 ---
 
-### 13.2 REST API — FastAPI (`api/`)
+### 14.2 REST API — FastAPI (`api/`)
 
 Struttura directory:
 
@@ -956,7 +1075,7 @@ Trade-off accettato: per aggiornare lo storico mostrato occorre rigenerare il pa
 
 ---
 
-### 13.3 Web Interface — Jinja2 templates (`api/templates/`)
+### 14.3 Web Interface — Jinja2 templates (`api/templates/`)
 
 Il frontend e' servito **dalla stessa app FastAPI** tramite `Jinja2Templates` + `StaticFiles`. Non c'e' un servizio Streamlit separato: un solo container, un solo processo, un solo deploy su Cloud Run.
 
@@ -1016,11 +1135,11 @@ api/
 
 ---
 
-## 14. Docker & Deploy su Cloud Run
+## 15. Docker & Deploy su Cloud Run
 
 Deploy di produzione: singolo container su **Google Cloud Run**, seguendo il pattern Lab 4. Il `docker compose` della root del progetto e' deprecato per la produzione; `step_2_ingestion/compose.yaml` sopravvive SOLO come strumento di sviluppo locale per far girare il MySQL di training.
 
-### 14.1 Struttura
+### 15.1 Struttura
 
 ```
 exam_project/
@@ -1082,7 +1201,7 @@ gcloud storage buckets add-iam-policy-binding gs://exam-project-backfill \
   --role="roles/storage.objectViewer"
 ```
 
-### 14.2 Comandi
+### 15.2 Comandi
 
 **Deploy Cloud Run (produzione):**
 
@@ -1132,9 +1251,9 @@ python -m step_5_classification.train
 
 ---
 
-## 15. GitHub Actions
+## 16. GitHub Actions
 
-### 15.1 Workflow CI — `test.yml`
+### 16.1 Workflow CI — `test.yml`
 
 Trigger: push su `master` o `main`, pull request.
 
@@ -1165,7 +1284,7 @@ jobs:
         run: pytest tests/ -v
 ```
 
-### 15.2 Workflow Cloud Run — `deploy-cloudrun.yml`
+### 16.2 Workflow Cloud Run — `deploy-cloudrun.yml`
 
 Trigger: push su `master` / tag `v*.*.*`.  
 Effettua `gcloud run deploy --source .` verso il servizio di produzione.
@@ -1213,7 +1332,7 @@ jobs:
 
 ---
 
-## 16. summary.ipynb
+## 17. summary.ipynb
 
 Notebook Jupyter che racconta l'intero progetto in forma narrativa. Struttura consigliata:
 
@@ -1239,7 +1358,7 @@ Notebook Jupyter che racconta l'intero progetto in forma narrativa. Struttura co
 
 ---
 
-## 17. README.md
+## 18. README.md
 
 Il README alla root del repository deve coprire:
 
@@ -1305,7 +1424,132 @@ Tabella breve: modello, task, metrica, score ottenuto
 
 ---
 
-## 18. Stato di Avanzamento
+## 17bis. Step 5.9 — Dal Regressore all'Ordinal XGBoost: Percorso Completo
+
+### Il problema operativo
+
+La classificazione dell'allerta PM10 (verde/giallo/arancio/rosso, soglie ARPA [20, 35, 50] µg/m³) deve soddisfare due vincoli hard fissati prima di vedere i numeri, per evitare cherry-picking:
+
+| Vincolo | Soglia | Motivazione operativa |
+|---------|--------|----------------------|
+| **C1** `severe_error_rate` | ≤ 2.5% | Errori di ≥2 classi (es. verde→rosso) segnalano un sistema non affidabile |
+| **C2** `recall_rosso` | ≥ 0.65 | Sotto questa soglia il sistema manca troppe allerte rosse reali — non è utile per la tutela della salute pubblica |
+
+Tra le strategie che rispettano entrambi: si sceglie quella con `f1_macro` massimo. A parità (|Δf1| ≤ 0.005): si preferisce la più semplice (classifier puro > regression→soglie > ibrido). Se nessuna passa: `production_ready = false`, `api/services/predictor.py` non viene aggiornato automaticamente.
+
+---
+
+### Fase 1 — Il regressore come backbone (`regression→soglie`)
+
+Il punto di partenza è il miglior regressore di Step 4: **XGBoost** (R²=0.721, RMSE=9.03 µg/m³). La pipeline più semplice per la classificazione applica direttamente le soglie ARPA al valore continuo predetto:
+
+```
+pm10_hat = regressor.predict(X)
+classe:  verde   se pm10_hat < 20
+         giallo  se 20 <= pm10_hat < 35
+         arancio se 35 <= pm10_hat < 50
+         rosso   se pm10_hat >= 50
+```
+
+**Risultato (`regression_to_class_xgboost`):** f1_macro=0.640, severe_error_rate=1.57%, recall_rosso=0.447.
+
+Il severe_error_rate è il più basso di tutte le strategie (1.57%): il regressore produce valori continui che rispettano naturalmente l'ordine delle classi. Il problema è recall_rosso=0.447 — il regressore sottostima i picchi estremi, e i campioni borderline (pm10 ≈ 50-60 µg/m³) finiscono classificati arancio. **C1 pass, C2 fail.**
+
+---
+
+### Fase 2 — Strategia ibrida (regressore + classificatore calibrato in zona-soglia)
+
+L'intuizione: lontano dalle soglie il regressore è stabile; vicino a una soglia la decisione è incerta, e un classificatore calibrato può avere informazione complementare (pattern meteo non lineari che la regressione approssima con rumore nel range di transizione).
+
+**Regola ibrida:**
+1. Calcola `pm10_hat` dal regressore, mappa a `class_reg` via soglie
+2. Calcola `proba_cls` dal classificatore XGBoost calibrato isotonicamente (5-fold temporale)
+3. Sia `d = min_t |pm10_hat - t|` per `t ∈ {20, 35, 50}`
+4. Se `d > δ`: `class_final = class_reg` (fuori zona-soglia, regressore affidabile)
+5. Se `d <= δ` e regressore/classificatore discordano: scala alla classe più grave se `proba_cls[classe_grave] >= p_threshold`
+
+**Parametri (δ\*, p\*)** selezionati via grid search out-of-fold su X_train (5-fold temporale — nessun leakage con il test set):
+- δ\* = 7.0 µg/m³
+- p\* = 0.35
+
+**Risultato (`hybrid_xgboost_reg_xgboost_cls`):** f1_macro=0.657, severe_error_rate=1.85%, recall_rosso=0.608.
+
+Rispetto a Fase 1: recall_rosso sale da 0.447 a 0.608 (+16.1pp), f1_macro migliora di 1.8pp. Rispetto al classifier XGBoost puro: f1_macro +1.6pp, over_alert_rate −7.3pp. Tuttavia recall_rosso=0.608 < 0.65: **C1 pass, C2 fail.** L'ibrido è il miglior candidato sperimentale, ma non viene promosso.
+
+---
+
+### Fase 3 — Ordinal XGBoost (Frank & Hall 2001)
+
+Il classificatore multiclass "piatto" (softmax su 4 classi) non sfrutta la struttura ordinale del target. La decomposizione di Frank & Hall (2001) trasforma il problema 4-classi in 3 classificatori binari indipendenti, ognuno focalizzato su un confine specifico:
+
+```
+P(y > 0)  ->  boundary verde/giallo   (66% vs 34%)
+P(y > 1)  ->  boundary giallo/arancio (34% vs 66%)
+P(y > 2)  ->  boundary arancio/rosso  (14% vs 86%)
+```
+
+La probabilità di classe si ricostruisce per differenza:
+
+```
+P(verde)   = 1 - P(y > 0)
+P(giallo)  = P(y > 0) - P(y > 1)
+P(arancio) = P(y > 1) - P(y > 2)
+P(rosso)   = P(y > 2)
+```
+
+**Meccanismo chiave:** il classificatore P(y > 2) si addestra esclusivamente sul confine arancio/rosso, con sample weights "balanced" calcolati per quel sotto-problema specifico (14% rosso / 86% resto). Nel XGBoost softmax, la penalizzazione bilanciata deve competere su tutte e 4 le classi simultaneamente; nell'ordinale il focus su `P(y > 2)` è totale e il ribilanciamento 14/86 è molto più aggressivo e mirato. Questo è il driver principale del miglioramento su recall_rosso.
+
+Gli iperparametri sono ereditati dall'XGBoost ottimizzato in Step 5 (nessuna nuova RandomizedSearchCV — benchmark informativo, non nuova tuning campaign). Implementato in `step_5_classification/ordinal_classifier.py` + `step_5_classification/train_ordinal.py`.
+
+**Risultato (`xgboost_ordinal`):** f1_macro=0.633, severe_error_rate=2.39%, recall_rosso=0.720.
+
+recall_rosso sale da 0.636 (XGBoost piatto) a 0.720 — miglioramento di 8.5pp. Il severe_error_rate rimane sotto il vincolo (2.39% < 2.5%). Il f1_macro=0.633 è il più basso tra le strategie che passano C1, ma il vincolo operativo primario (catturare le allerte rosse) viene rispettato per la prima volta. **C1 pass, C2 pass — production_ready = true.**
+
+---
+
+### Tabella riassuntiva — tutte le strategie
+
+| Strategia | Fase | f1_macro | severe\_error\_rate | recall\_rosso | over\_alert\_rate | C1 | C2 | Esito |
+|---|---|---:|---:|---:|---:|:---:|:---:|:---:|
+| `logistic_regression` | — | 0.6262 | 2.89% | 0.6534 | 24.26% | FAIL | pass | ❌ |
+| `random_forest` | — | 0.6269 | 2.53% | 0.6072 | 23.94% | FAIL | FAIL | ❌ |
+| `xgboost` | — | 0.6419 | 2.05% | 0.6360 | 23.14% | pass | FAIL | ❌ |
+| `xgboost_calibrated` | 2 | 0.6362 | 2.20% | 0.5869 | 14.45% | pass | FAIL | ❌ |
+| `regression_to_class_xgboost` | 1 | 0.6397 | 1.57% | 0.4466 | 11.71% | pass | FAIL | ❌ |
+| `hybrid_xgboost_reg_xgboost_cls` | 2 | **0.6574** | 1.85% | 0.6081 | 15.88% | pass | FAIL | ❌ |
+| **`xgboost_ordinal`** | **3** | 0.6333 | 2.39% | **0.7201** | 19.92% | **pass** | **pass** | **✅** |
+
+### Selezione finale
+
+**`production_ready = true`** — `xgboost_ordinal` è la prima e unica strategia a superare entrambi i vincoli hard.
+
+Il tradeoff accettato: f1_macro=0.633 è inferiore al picco ibrido (0.657), ma recall_rosso=0.720 supera la soglia operativa del 65% con un margine di 7pp. Per un sistema di allerta pubblica, il costo di una mancata allerta rossa è sistematicamente superiore al costo di una falsa allerta. `xgboost_ordinal` riflette esplicitamente questa priorità.
+
+Il risultato completo è in `step_5_classification/artifacts/final_model_selection.json`.
+
+### Script di riproduzione
+
+```bash
+# Fase 1 + classificatori baseline
+python -m step_5_classification.train
+python -m step_5_classification.evaluate
+
+# Fase 2: calibrazione + tuning ibrido + valutazione
+python -m step_5_classification.calibrate
+python -m step_5_classification.tune_hybrid
+python -m step_5_classification.evaluate_hybrid
+
+# Fase 3: ordinal benchmark
+python -m step_5_classification.train_ordinal
+
+# Confronto completo + selezione finale
+python -m scripts.compare_classification_strategies
+python -m scripts.select_final_model
+```
+
+---
+
+## 19. Stato di Avanzamento
 
 | Step | Descrizione | Stato |
 |------|-------------|-------|
@@ -1313,9 +1557,10 @@ Tabella breve: modello, task, metrica, score ottenuto
 | Step 2 | Ingestion — MySQL locale (solo staging training), schema, ingest.py | ✅ Completato |
 | Step 3 | Feature engineering, EDA, `daily_dataset_clean.parquet` | ✅ Completato |
 | Step 4 | Regressione — 3 modelli trainati, metriche salvate | ✅ Completato |
-| Step 5 | Classificazione — 3 modelli trainati + calibrazione isotonica | ✅ Completato |
-| Step 6 | REST API — FastAPI `api/` (endpoint JSON) | ✅ Completato |
-| Step 7 | Frontend Jinja2 integrato in FastAPI (mappa, forecast, history) | 🔲 Da fare |
+| Step 5 | Classificazione — baseline (3 modelli) + Fase 1 regression→soglie + Fase 2 ibrida + Fase 3 ordinal; best model: `xgboost_ordinal` (production_ready=true) | ✅ Completato |
+| Step 6 | Clustering stazioni — KMeans/Agglomerative (N=67), 8 feature profilo, validazione vs provincia + Kruskal-Wallis | ✅ Completato |
+| Step 7 | REST API — FastAPI `api/` (endpoint JSON) | ✅ Completato |
+| Step 8 | Frontend Jinja2 integrato in FastAPI (mappa, forecast, history) | 🔲 Da fare |
 | Step 7.1 | Rimozione dipendenza MySQL dal container runtime (`/stations`, `/history` da parquet) | 🔲 Da fare |
 | Step 8 | Singolo `Dockerfile` + deploy Cloud Run (`gcloud run deploy`) | 🔲 Da fare |
 | CI/CD | `.github/workflows/test.yml` + `deploy-cloudrun.yml` | 🔲 Da fare |

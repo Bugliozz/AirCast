@@ -41,6 +41,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
 
 from shared.utils import impute_missing, temporal_train_test_split
+from step_3_eda.config import PM10_LABELS, PM10_THRESHOLDS
 from step_4_regression.config import (
     ARTIFACTS_DIR,
     DROP_COLS,
@@ -52,7 +53,9 @@ from step_4_regression.config import (
 logger = logging.getLogger(__name__)
 
 # Alert class labels in severity order
-ALERT_CLASSES: List[str] = ["verde", "giallo", "arancio", "rosso"]
+ALERT_CLASSES: List[str] = list(PM10_LABELS)
+ALERT_THRESHOLDS: List[float] = [float(v) for v in PM10_THRESHOLDS[1:-1]]
+NEAR_THRESHOLD_DELTA: float = 5.0
 
 # Model artifact names — must match filenames written by train.py
 MODEL_NAMES: List[str] = ["elasticnet", "xgboost", "random_forest"]
@@ -67,7 +70,7 @@ _TRAIN_RATIO: float = 0.70
 
 def _load_test_split(
     parquet_path: str,
-) -> Tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+) -> Tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, Dict]:
     """Reproduce the temporal train/test split used during training.
 
     ``classe_allerta`` is derived from ``pm10`` (the regression target) and
@@ -83,7 +86,8 @@ def _load_test_split(
         parquet_path: Path to ``daily_dataset_clean.parquet``.
 
     Returns:
-        Tuple ``(X_test, y_test, alert_class_test, dates_test)`` where:
+        Tuple ``(X_test, y_test, alert_class_test, dates_test, split_metadata)``
+        where:
         - ``X_test``: imputed feature matrix for the test period.
         - ``y_test``: true PM10 values (original scale, ug/m3).
         - ``alert_class_test``: alert-class labels aligned row-for-row with
@@ -119,12 +123,53 @@ def _load_test_split(
     # Extract classe_allerta and data_giorno for the test portion as metadata
     # (neither is passed to the model — both are used only for diagnostics)
     test_mask = df_sorted["data_giorno"] > cutoff_day
+    train_mask = ~test_mask
+    train_df = df_sorted.loc[train_mask].reset_index(drop=True)
+    test_df = df_sorted.loc[test_mask].reset_index(drop=True)
+    valid_train_mask = (
+        train_df["classe_allerta"].notna()
+        & train_df[TARGET_COL].notna()
+    ).reset_index(drop=True)
+    valid_test_mask = (
+        test_df["classe_allerta"].notna()
+        & test_df[TARGET_COL].notna()
+    ).reset_index(drop=True)
+    train_df_valid = train_df.loc[valid_train_mask].reset_index(drop=True)
+    test_df_valid = test_df.loc[valid_test_mask].reset_index(drop=True)
+
+    n_dropped_test = int((~valid_test_mask).sum())
+    if n_dropped_test:
+        logger.warning(
+            "Dropped %d test rows with invalid target/alert class before evaluation.",
+            n_dropped_test,
+        )
+
     alert_class_test = (
-        df_sorted.loc[test_mask, "classe_allerta"]
+        test_df_valid["classe_allerta"]
         .reset_index(drop=True)
         .astype(str)  # ensure plain str, not pd.Categorical, for == comparisons
     )
-    dates_test = df_sorted.loc[test_mask, "data_giorno"].reset_index(drop=True)
+    dates_test = test_df_valid["data_giorno"].reset_index(drop=True)
+    train_dates = train_df_valid["data_giorno"].reset_index(drop=True)
+
+    train_stations = train_df_valid["idstazione"].astype(str)
+    test_stations = test_df_valid["idstazione"].astype(str)
+    station_intersection = set(train_stations) & set(test_stations)
+    split_metadata = {
+        "train_date_range": [
+            str(pd.to_datetime(train_dates, errors="raise").min()),
+            str(pd.to_datetime(train_dates, errors="raise").max()),
+        ],
+        "test_date_range": [
+            str(pd.to_datetime(dates_test, errors="raise").min()),
+            str(pd.to_datetime(dates_test, errors="raise").max()),
+        ],
+        "n_train_samples": int(len(train_df_valid)),
+        "n_test_samples": int(len(test_df_valid)),
+        "n_stations_train": int(train_stations.nunique()),
+        "n_stations_test": int(test_stations.nunique()),
+        "n_stations_intersection": int(len(station_intersection)),
+    }
 
     logger.info(
         "Alert-class distribution in test set: %s",
@@ -139,8 +184,10 @@ def _load_test_split(
     # Imputation: fit medians on train only, then apply the same medians to test
     X_train, train_medians = impute_missing(X_train)
     X_test, _ = impute_missing(X_test, medians=train_medians)
+    X_test = X_test.loc[valid_test_mask].reset_index(drop=True)
+    y_test = y_test.loc[valid_test_mask].reset_index(drop=True)
 
-    return X_test, y_test, alert_class_test, dates_test
+    return X_test, y_test, alert_class_test, dates_test, split_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +198,7 @@ def compute_metrics(
     y_true: pd.Series,
     y_pred: np.ndarray,
     alert_class: pd.Series,
+    near_threshold_delta: float = NEAR_THRESHOLD_DELTA,
 ) -> Dict:
     """Compute RMSE, MAE, R² overall and RMSE broken down by alert class.
 
@@ -174,33 +222,66 @@ def compute_metrics(
     mae = float(mean_absolute_error(y_true, y_pred))
     r2 = float(r2_score(y_true, y_pred))
 
-    rmse_per_class: Dict[str, float] = {}
-    n_per_class: Dict[str, int] = {}
+    rmse_per_fascia: Dict[str, float] = {}
+    mae_per_fascia: Dict[str, float] = {}
+    n_per_fascia: Dict[str, int] = {}
 
     for cls in ALERT_CLASSES:
         mask = alert_class == cls
         n = int(mask.sum())
-        n_per_class[cls] = n
+        n_per_fascia[cls] = n
 
         if n == 0:
             logger.warning(
                 "Alert class '%s' absent from test set — RMSE set to NaN.", cls
             )
-            rmse_per_class[cls] = float("nan")
+            rmse_per_fascia[cls] = float("nan")
+            mae_per_fascia[cls] = float("nan")
             continue
 
         cls_rmse = float(
             np.sqrt(mean_squared_error(y_true[mask], y_pred[mask]))
         )
-        rmse_per_class[cls] = cls_rmse
-        logger.info("  RMSE %-8s: %7.4f ug/m3  (n=%d)", cls, cls_rmse, n)
+        cls_mae = float(mean_absolute_error(y_true[mask], y_pred[mask]))
+        rmse_per_fascia[cls] = cls_rmse
+        mae_per_fascia[cls] = cls_mae
+        logger.info(
+            "  %-8s: RMSE=%7.4f | MAE=%7.4f ug/m3  (n=%d)",
+            cls, cls_rmse, cls_mae, n,
+        )
+
+    y_true_arr = y_true.to_numpy() if hasattr(y_true, "to_numpy") else np.asarray(y_true)
+    y_pred_arr = np.asarray(y_pred)
+    rmse_near_thresholds: Dict[str, float] = {}
+    n_near_thresholds: Dict[str, int] = {}
+    for threshold in ALERT_THRESHOLDS:
+        key = f"{threshold:.1f}"
+        mask = (
+            (y_true_arr >= threshold - near_threshold_delta)
+            & (y_true_arr <= threshold + near_threshold_delta)
+        )
+        n = int(mask.sum())
+        n_near_thresholds[key] = n
+        if n == 0:
+            rmse_near_thresholds[key] = float("nan")
+            continue
+        rmse_near_thresholds[key] = float(
+            np.sqrt(mean_squared_error(y_true_arr[mask], y_pred_arr[mask]))
+        )
 
     return {
         "rmse": rmse,
         "mae": mae,
         "r2": r2,
-        "rmse_per_class": rmse_per_class,
-        "n_per_class": n_per_class,
+        "rmse_per_fascia": rmse_per_fascia,
+        "mae_per_fascia": mae_per_fascia,
+        "n_per_fascia": n_per_fascia,
+        "rmse_near_thresholds": rmse_near_thresholds,
+        "n_near_thresholds": n_near_thresholds,
+        "near_threshold_delta": float(near_threshold_delta),
+        "rmse_per_class": rmse_per_fascia,
+        "mae_per_class": mae_per_fascia,
+        "n_per_class": n_per_fascia,
     }
 
 
@@ -593,6 +674,17 @@ def plot_native_feature_importance(
 # 3.5.1 — Main entry point
 # ---------------------------------------------------------------------------
 
+def _json_safe(value):
+    """Convert NaN metric values to JSON null while preserving plain numbers."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (np.floating, float)) and np.isnan(value):
+        return None
+    return value
+
+
 def run_evaluation(parquet_path: str) -> Dict[str, Dict]:
     """Evaluate trained regression models on the holdout test set.
 
@@ -615,7 +707,9 @@ def run_evaluation(parquet_path: str) -> Dict[str, Dict]:
         Dict mapping model name → metrics dict.
         Empty dict if no artifact is found.
     """
-    X_test, y_test, alert_class_test, dates_test = _load_test_split(parquet_path)
+    X_test, y_test, alert_class_test, dates_test, split_metadata = _load_test_split(
+        parquet_path
+    )
 
     artifacts_dir = Path(ARTIFACTS_DIR)
     results: Dict[str, Dict] = {}
@@ -709,13 +803,18 @@ def run_evaluation(parquet_path: str) -> Dict[str, Dict]:
     models_payload: Dict = {}
     for model_name, m in results.items():
         models_payload[model_name] = {
+            "strategy_name": f"regression_{model_name}",
             "rmse": m["rmse"],
             "mae": m["mae"],
             "r2": m["r2"],
-            "rmse_per_class": {
-                k: (v if not np.isnan(v) else None)
-                for k, v in m["rmse_per_class"].items()
-            },
+            "rmse_per_fascia": _json_safe(m["rmse_per_fascia"]),
+            "mae_per_fascia": _json_safe(m["mae_per_fascia"]),
+            "n_per_fascia": m["n_per_fascia"],
+            "rmse_near_thresholds": _json_safe(m["rmse_near_thresholds"]),
+            "n_near_thresholds": m["n_near_thresholds"],
+            "near_threshold_delta": m["near_threshold_delta"],
+            "rmse_per_class": _json_safe(m["rmse_per_class"]),
+            "mae_per_class": _json_safe(m["mae_per_class"]),
             "n_per_class": m["n_per_class"],
         }
 
@@ -723,7 +822,13 @@ def run_evaluation(parquet_path: str) -> Dict[str, Dict]:
         "best_model": best_model_name,
         "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "dataset_path": parquet_path,
+        "train_date_range": split_metadata["train_date_range"],
+        "test_date_range": split_metadata["test_date_range"],
         "n_test_samples": int(len(y_test)),
+        "n_stations_train": int(split_metadata["n_stations_train"]),
+        "n_stations_test": int(split_metadata["n_stations_test"]),
+        "n_stations_intersection": int(split_metadata["n_stations_intersection"]),
+        "split_metadata": split_metadata,
         "models": models_payload,
     }
 

@@ -1,7 +1,23 @@
-# Piano di Implementazione — Step 5–10
+# Piano di Implementazione — Step 5–11
 
 Checklist operativa per tutti i passi ancora da implementare.
 Per la descrizione tecnica dettagliata di ogni step, vedi [`technical_doc.md`](technical_doc.md).
+
+---
+
+## Step 3.5 - Random Matrix Theory Diagnostic (`step_3_eda/`)
+
+Integrazione non invasiva nello Step 3: diagnostica spettrale della matrice di correlazione delle feature prima della modellazione ML.
+
+- [x] Crea `step_3_eda/rmt.py` con selezione feature numeriche, standardizzazione, autovalori/autovettori, bounds Marchenko-Pastur
+- [x] Escludi target/identificatori (`pm10`, `classe_allerta`, `idstazione`, `nomestazione`, `comune`, `data_giorno`) e ordinali calendario grezzi (`mese`, `giorno_settimana`)
+- [x] Aggiungi null empirico `grouped_circular_shift` per stazione, piu' adatto a serie temporali ambientali rispetto allo shuffle iid
+- [x] Salva artifact tabellari: `rmt_summary.json`, `rmt_eigenvalues.csv`, `rmt_component_loadings.csv`, `rmt_feature_means.csv`, `rmt_feature_stds.csv`
+- [x] Aggiungi plot RMT: `14_rmt_eigenvalue_spectrum.png`, `15_rmt_top_eigenvector_loadings.png`, `16_rmt_empirical_null_comparison.png`
+- [x] Integra la diagnostica in `python -m step_3_eda.eda` senza modificare training, classificazione, regressione o API
+- [x] Verifica standalone: `python -m step_3_eda.rmt --input step_3_eda/daily_dataset_clean.parquet`
+
+Risultato corrente: 41 feature numeriche selezionate, 9 componenti sopra il bulk Marchenko-Pastur (`lambda+ = 1.056`), ~74.0% varianza spettrale spiegata dalle componenti fuori bulk.
 
 ---
 
@@ -71,12 +87,12 @@ Per la descrizione tecnica dettagliata di ogni step, vedi [`technical_doc.md`](t
 - [x] Evidenza feature importance: `pm10_roll7` domina sia regressione sia classificazione; seguono `o3_mean`, `pressure_mean`, `provincia`, feature di vento e alcune lag meteo
 - [x] Evidenza da confronto extra: la pipeline `XGBoost regressione -> soglie classi` produce in verifica rapida `f1_macro ~ 0.6434` e `severe_error_rate ~ 0.0157`, quindi e' competitiva con la classificazione separata e va considerata come baseline strutturale
 - [x] Nota decisionale: per uso operativo di allerta non basta ottimizzare solo `f1_macro`; vanno monitorati anche `recall` della classe `rosso` e `severe_error_rate`
-- [ ] Esperimento aggiuntivo: implementa benchmark `CatBoostRegressor` e `CatBoostClassifier` con confronto diretto contro `XGBoost` e `RandomForest`
-- [ ] Esperimento aggiuntivo: prova gestione nativa delle categoriche (`provincia`, `stagione`) e valuta reintroduzione di `idstazione` come feature categoriale, dato che l'inferenza finale avviene sulle stesse stazioni gia' viste in training
-- [ ] Esperimento aggiuntivo: formalizza e salva nei metrics artifact il confronto `regressione -> soglie` vs classificazione separata, includendo `f1_macro`, `severe_error_rate`, `recall_rosso` e confusion matrix
-- [ ] Esperimento aggiuntivo: valuta un approccio ordinale o cost-sensitive per la classificazione allerta, coerente con la distanza semantica tra errori adiacenti e errori gravi (`rosso -> verde`)
-- [ ] Esperimento aggiuntivo: definisci un criterio finale di scelta modello production-ready che combini `f1_macro`, `recall_rosso` e penalizzazione degli errori con distanza >= 2
-- [ ] Documentazione tecnica: riporta in `technical_doc.md`, `summary.ipynb` e `README.md` che la scelta attuale migliore e' `XGBoost`, ma che la classificazione resta area aperta a miglioramento tramite benchmark ordinali / CatBoost / regressione con soglie
+- [x] Esperimento aggiuntivo: benchmark CatBoost valutato e rimosso — non aggiunge valore rispetto a XGBoost sul dataset corrente
+- [x] Esperimento aggiuntivo: gestione categoriche (`provincia`, `stagione`) tramite `OrdinalEncoder` in `build_preprocessor()` per tutti i modelli ad albero
+- [x] Esperimento aggiuntivo: confronto `regressione -> soglie` vs classificazione separata formalizzato in `classification_metrics.json` con chiave `regression_to_class_xgboost` (f1_macro=0.640, severe_error_rate=1.57%, recall_rosso=0.447)
+- [x] Esperimento aggiuntivo: approccio ordinale implementato — `OrdinalClassifier` (Frank & Hall 2001) wrappa XGBoost in 3 classificatori binari P(y>k) con per-threshold balanced weights; vedi `step_5_classification/ordinal_classifier.py` e `train_ordinal.py`
+- [x] Esperimento aggiuntivo: criterio production-ready definito in `STRATEGIA_CLASSIFICAZIONE_IBRIDA.md` §8 — vincoli hard C1 (severe_error_rate ≤ 2.5%) e C2 (recall_rosso ≥ 0.65); `xgboost_ordinal` e' il primo modello a superarli entrambi
+- [x] Documentazione tecnica: aggiornato `technical_doc.md` §17bis con percorso completo (regressor baseline → Fase 1 → Fase 2 → Fase 3 → selezione finale `xgboost_ordinal`, production_ready=true)
 
 ---
 
@@ -388,29 +404,124 @@ Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia s
 
 ---
 
+## Step 7.7 — Clustering Stazioni PM10 (`step_6_clustering/`)
+
+> **Scope.** Clustering **non supervisionato delle 67 stazioni** (unità di analisi = stazione, non giorno-stazione). Ogni stazione è ridotta a un profilo numerico aggregato su tutti i giorni; l'obiettivo è scoprire *tipologie di stazioni* in Lombardia (es. urbano-industriale cronico / pianura intermedia / pedemontano-alpino pulito) e visualizzarle su mappa.
+>
+> **Numerazione.** La directory è `step_6_clustering/` per continuità con la pipeline ML (`step_4_regression` → `step_5_classification` → `step_6_clustering`). La sezione del doc è "7.7" perché le sezioni 6/7 sono già API/frontend e questo step è collocato qui — dopo il serving, prima del deploy — come richiesto nell'ordine di build. Dipende **solo** dal parquet, quindi è sviluppabile in parallelo a Step 6/7.
+>
+> **Decisioni progettuali (con motivazione).**
+> - **O3 escluso dai profili**: solo 37/67 stazioni hanno dati O3 → includerlo imporrebbe un valore imputato sul 45% delle stazioni. `no2_mean` mantenuto (66/67, copertura ~99%).
+> - **N=67 è piccolo**: `silhouette` e DBSCAN/OPTICS sono rumorosi su così pochi punti → KMeans + Agglomerative sono i candidati primari; DBSCAN entra solo come confronto, non come modello finale atteso.
+> - **Circolarità dichiarata**: i profili usano feature derivate da PM10 (media, % giorni critici, stagionalità) → validare i cluster contro `classe_allerta` **non è indipendente** (entrambi derivano da PM10). La validazione esterna primaria usa `provincia` (geografia, indipendente) + separazione su severità continua.
+> - **Label "classe dominante" scartata come validazione**: la classe dominante per stazione è `verde` (50), `giallo` (17), `arancio`/`rosso` (0) → collassa a binario sbilanciato, poco informativo per ARI/homogeneity.
+> - **RobustScaler** (mediana/IQR) come default: robusto a poche stazioni outlier urbano-industriali con PM10/NO2 estremi che altrimenti dominerebbero la distanza.
+
+### 7.7.1 Scaffold directory
+
+- [x] Crea `step_6_clustering/__init__.py` (vuoto, marca il package)
+- [x] Crea directory `step_6_clustering/artifacts/` e `step_6_clustering/artifacts/plots/`
+
+### 7.7.2 `config.py`
+
+- [x] `PROFILE_FEATURES` (le 8 feature di clustering, lean per N=67): `["pm10_mean", "pct_critical_days", "seasonality_ratio", "stagnation_index_mean", "dist_industrial_km", "no2_mean", "quota", "wind_speed_mean"]`
+- [x] `META_COLS = ["idstazione", "nomestazione", "provincia", "comune", "lat", "lng"]` (tenute per mappa/validazione, **non** usate come feature)
+- [x] `EXTERNAL_LABEL_COL = "provincia"` (label per validazione esterna indipendente)
+- [x] `SCALER = "robust"` (RobustScaler; opzione `"standard"` per confronto)
+- [x] `K_RANGE = range(2, 9)` (k candidati per KMeans/Agglomerative)
+- [x] `KMEANS_PARAMS` (`n_init=10`, `random_state`), `AGGLOMERATIVE_PARAMS` (`linkage="ward"`)
+- [x] `DBSCAN_EPS_GRID` (es. `[0.5, 0.75, 1.0, 1.25, 1.5]` su feature scalate) + `DBSCAN_MIN_SAMPLES = 3`
+- [x] `RANDOM_STATE = 42`
+- [x] Path: `ARTIFACTS_DIR`, `PLOTS_DIR`, `PROFILES_FILE` (`station_profiles.parquet`), `CLUSTERS_FILE` (`station_clusters.csv`), `METRICS_FILE` (`clustering_metrics.json`), `MAP_FILE` (`cluster_map.html`)
+
+### 7.7.3 `profiles.py` — costruzione profili per stazione
+
+- [x] Carica `step_3_eda/daily_dataset_clean.parquet`
+- [x] `build_station_profiles(df) -> pd.DataFrame` con `groupby("idstazione")` e aggregazioni:
+  - `pm10_mean` = media PM10 (cronico)
+  - `pct_critical_days` = frazione giorni con `classe_allerta in {"arancio","rosso"}` (PM10>35; più discriminante e meno sparso del solo "rosso", che a livello stazione è quasi sempre 0)
+  - `seasonality_ratio` = media PM10 `stagione=="inverno"` / media PM10 `stagione=="estate"` (ampiezza stagionale, decorrela dalla media)
+  - `stagnation_index_mean` = media `stagnation_index` (regime di stagnazione; copertura ~78% → media affidabile)
+  - `dist_industrial_km` = `first()` (statica per stazione)
+  - `no2_mean` = media NO2 (proxy traffico)
+  - `quota` = `first()`; **imputa l'unica stazione mancante** con la mediana di provincia (fallback mediana globale)
+  - `wind_speed_mean` = media vento (regime di ventilazione)
+  - mantieni `META_COLS` via `first()`
+- [x] `assert` nessun NaN nelle `PROFILE_FEATURES` dopo la costruzione (67 righe complete)
+- [x] Salva `station_profiles.parquet`
+
+### 7.7.4 `cluster.py` — fit + selezione modello
+
+- [x] Carica i profili; separa matrice feature `X = profiles[PROFILE_FEATURES]` dai metadati
+- [x] Scala con `RobustScaler` fittato su tutte le 67 righe (nessuno split train/test: clustering non supervisionato sull'intera popolazione)
+- [x] **KMeans** su `K_RANGE`: registra `inertia_` (elbow) + `silhouette`, `calinski_harabasz`, `davies_bouldin`
+- [x] **AgglomerativeClustering** (Ward) su `K_RANGE`: stesse metriche interne + `scipy.cluster.hierarchy.linkage` per il dendrogramma
+- [x] **DBSCAN** su `DBSCAN_EPS_GRID`: `silhouette` (escludendo il rumore), `n_clusters`, `n_noise` — confronto, aspettative basse
+- [x] Seleziona `(algo, k)` finale per `silhouette` + interpretabilità; assegna le etichette finali alle 67 stazioni
+- [x] Salva `scaler.joblib`, `kmeans_best.joblib`, `agglomerative_best.joblib`, `station_clusters.csv` (`idstazione,cluster`)
+- [x] Scrivi `clustering_metrics.json`: metriche interne per algo/k + `"best_model"` (algo+k) + `"n_stations": 67`
+
+### 7.7.5 `evaluate.py` — validazione + plot
+
+- [x] Ricarica profili + etichette finali
+- [x] **Validazione esterna vs `provincia`** (indipendente): `adjusted_rand_score`, `homogeneity`, `completeness`, `v_measure` → in `clustering_metrics.json`
+- [x] **Separazione su severità continua**: distribuzione di `pm10_mean` e `pct_critical_days` per cluster (boxplot) + Kruskal-Wallis p-value
+- [x] **Caveat circolarità**: calcola anche `homogeneity` vs `classe_allerta` dominante MA etichettala in JSON come `"non_independent": true` con nota esplicita (riportata solo per completezza, non come prova di validità)
+- [x] Tabella interpretazione cluster: media di ogni feature **raw** (non scalata) per cluster → CSV/JSON (per nominare i cluster: "cronico", "intermedio", "pulito"…)
+- [x] Plot in `artifacts/plots/`:
+  - `elbow.png` (inertia vs k) + `silhouette_vs_k.png`
+  - `dendrogram.png` (Agglomerative Ward)
+  - `dbscan_kdistance.png` (k-distance per scelta eps)
+  - `pca_2d_clusters.png` (PCA 2D colorata per cluster + varianza spiegata in titolo)
+  - `cluster_profile_heatmap.png` (medie feature standardizzate per cluster)
+  - `pm10_by_cluster_boxplot.png` (separazione severità)
+
+### 7.7.6 `map_view.py` — mappa Folium dei cluster
+
+- [x] `build_cluster_map(profiles, labels) -> folium.Map`: 1 marker per stazione colorato per cluster (palette categorica), popup con `nomestazione` + cluster + `pm10_mean` + `provincia`
+- [x] Centra su Lombardia, riusa le convenzioni di `api/services/map_view.py`
+- [x] Salva `cluster_map.html` in `artifacts/`
+
+### 7.7.7 Verifica
+
+- [x] `python -m step_6_clustering.cluster` completa senza errori; `station_profiles.parquet`, `station_clusters.csv`, i `.joblib` e `clustering_metrics.json` presenti
+- [x] `python -m step_6_clustering.evaluate` completa senza errori; tutti i plot salvati in `artifacts/plots/`
+- [x] `clustering_metrics.json`: `silhouette > 0` per il modello scelto, blocco validazione esterna vs `provincia` presente, caveat circolarità marcato `non_independent`
+- [x] `cluster_map.html` si apre: 67 marker colorati per cluster
+- [x] Nessuna nuova dipendenza richiesta (`scikit-learn`, `scipy`, `folium`, `matplotlib`/`seaborn` già nel progetto) — conferma in `requirements.txt`
+
+### 7.7.8 Allineamento scelte progettuali
+
+- [x] Conferma: O3 escluso dai profili (solo 37/67 stazioni misurano O3); NO2 mantenuto (66/67)
+- [x] Conferma: con N=67, KMeans + Agglomerative sono i candidati primari; DBSCAN solo confronto (silhouette/density instabili su pochi punti)
+- [x] Conferma: validazione esterna primaria su `provincia` + severità continua; `classe_allerta` riportata solo come check non indipendente (circolarità)
+- [x] Conferma: documentare in `technical_doc.md` la sezione clustering (profili, scelta k, interpretazione cluster, limiti N piccolo)
+
+---
+
 ## Step 8 — Deploy Cloud Run
 
 > **Allineamento feedback prof:** deploy su GCP Cloud Run (come Lab 4). Niente `docker compose` per produzione: compose resta solo per dev locale della pipeline di training (MySQL + ingestion).
 
 ### 8.1 `Dockerfile` (root)
 
-- [ ] Crea `Dockerfile` a root seguendo pattern Lab 4 slide 6
-- [ ] `FROM python:3.11-slim`, `WORKDIR /app`
-- [ ] `COPY requirements.txt .` + `RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt`
-- [ ] `COPY api/ ./api/`, `COPY shared/ ./shared/`, `COPY step_4_regression/ ./step_4_regression/`, `COPY step_5_classification/ ./step_5_classification/`
-- [ ] `COPY artifacts/ ./artifacts/` (modelli `.joblib` + `daily_dataset_clean.parquet`)
-- [ ] `ENV PORT=8080` + `EXPOSE 8080`
-- [ ] `CMD ["sh","-c","uvicorn api.main:app --host 0.0.0.0 --port ${PORT}"]`
+- [x] Crea `Dockerfile` a root seguendo pattern Lab 4 slide 6
+- [x] `FROM python:3.11-slim`, `WORKDIR /app`
+- [x] `COPY requirements.txt .` + `RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt`
+- [x] `COPY api/ ./api/`, `COPY shared/ ./shared/`, `COPY step_4_regression/ ./step_4_regression/`, `COPY step_5_classification/ ./step_5_classification/`
+- [x] `COPY artifacts/ ./artifacts/` (modelli `.joblib` + `daily_dataset_clean.parquet`)
+- [x] `ENV PORT=8080` + `EXPOSE 8080`
+- [x] `CMD ["sh","-c","uvicorn api.main:app --host 0.0.0.0 --port ${PORT}"]`
 
 ### 8.2 Configurazione env per Cloud Run
 
-- [ ] `api/config.py`: legge da env `GCS_BUCKET`, `ARTIFACTS_DIR`, `PARQUET_PATH` con default sensati
-- [ ] Service account Cloud Run: ruolo `roles/storage.objectViewer` sul bucket `exam-project-backfill` (per fetch 7gg recenti)
+- [x] `api/config.py`: legge da env `GCS_BUCKET`, `ARTIFACTS_DIR`, `PARQUET_PATH` con default sensati
+- [x] Service account Cloud Run: ruolo `roles/storage.objectViewer` sul bucket `exam-project-backfill` (per fetch 7gg recenti)
 
 ### 8.3 Deploy
 
-- [ ] `gcloud run deploy pm10-forecast --source . --region=europe-west1 --max-instances=2 --allow-unauthenticated --memory=1Gi --set-env-vars GCS_BUCKET=exam-project-backfill`
-- [ ] Annota URL pubblico restituito (es. `https://pm10-forecast-xxx.a.run.app`)
+- [x] `gcloud run deploy pm10-forecast --source . --region=europe-west1 --max-instances=2 --allow-unauthenticated --memory=1Gi --set-env-vars GCS_BUCKET=exam-project-backfill`
+- [x] URL pubblico restituito: `https://pm10-forecast-47880508774.europe-west1.run.app`
 
 ### 8.4 `compose.yaml` (solo dev locale, NON per deploy)
 
@@ -440,8 +551,8 @@ Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia s
 - [ ] Crea `.github/workflows/docker-publish.yml`
 - [ ] Trigger: `push` su `master`/`main` + tag `v*.*.*`
 - [ ] Step: login GHCR con `GITHUB_TOKEN`
-- [ ] Step: build e push immagine `api` → `ghcr.io/${{ github.repository }}/api:latest`
-- [ ] Step: build e push immagine `webapp` → `ghcr.io/${{ github.repository }}/webapp:latest`
+- [ ] Step: build e push singola immagine FastAPI integrata -> `ghcr.io/${{ github.repository }}/pm10-forecast:latest`
+- [ ] Collega il package GHCR al repository GitHub dalla pagina del package
 
 ### 9.3 Test suite di base (`tests/`)
 
@@ -495,12 +606,13 @@ Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia s
 ```
 Step 5 (classification)
     ↓
-Step 6 (API) + Step 7 (webapp)  ← sviluppabili in parallelo
+Step 6 (API) + Step 7 (webapp) + Step 7.7 (clustering)  ← paralleli (clustering dipende solo dal parquet)
     ↓
 Step 8 (Docker)
     ↓
 Step 9 (CI/CD) + Step 10 (notebook) + Step 11 (README)  ← parallelizzabili
 ```
 
-> Step 10 (notebook) richiede che Step 5, 6 e 8 siano completati (per i `.json` di metriche e l'API attiva).  
+> Step 7.7 (clustering) dipende solo da `daily_dataset_clean.parquet`: nessun vincolo su API/frontend.  
+> Step 10 (notebook) richiede che Step 5, 6 e 8 siano completati (per i `.json` di metriche e l'API attiva); può includere una sezione clustering (mappa + PCA da `step_6_clustering/artifacts/`).  
 > Step 11 (README) richiede che tutti i comandi di esecuzione siano verificati.

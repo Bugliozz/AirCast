@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import joblib
@@ -21,6 +20,12 @@ import pandas as pd
 
 from fastapi import HTTPException
 
+from api.config import (
+    CALIBRATED_CLASSIFIER_PATH,
+    HYBRID_PARAMS_PATH,
+    PARQUET_PATH,
+    REGRESSION_MODEL_PATH,
+)
 from api.services.recent_data import (
     compute_data_quality,
     fetch_recent_for_station,
@@ -36,17 +41,20 @@ from step_3_eda.config import (
     STAGNATION_PRESSURE_THRESHOLD,
     STAGNATION_WIND_THRESHOLD,
 )
-from step_5_classification.config import LABEL_MAP
+from step_5_classification.config import ALERT_THRESHOLDS, LABEL_MAP
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Artifact paths
 # ---------------------------------------------------------------------------
-_ROOT = Path(__file__).resolve().parent.parent.parent
-REGRESSION_MODEL_PATH = _ROOT / "step_4_regression" / "artifacts" / "best_model.joblib"
-CLASSIFICATION_MODEL_PATH = _ROOT / "step_5_classification" / "artifacts" / "best_model.joblib"
-FEATURE_STORE_PATH = _ROOT / "step_3_eda" / "daily_dataset_clean.parquet"
+# Hybrid strategy: calibrated classifier (isotonic, temporal CV) used together
+# with the regressor. Replaces the plain best_model.joblib.
+# Rationale (2026-04-24): hybrid improves f1_macro (+1.5pp vs xgboost puro),
+# halves false-alarm rate (15.9% vs 23.1%), and reduces severe errors (1.85%
+# vs 2.05%). recall_rosso drops 2.8pp (0.608 vs 0.636). Neither strategy
+# reaches the §8 target of 0.65 — the hybrid is the best available candidate.
+FEATURE_STORE_PATH = PARQUET_PATH
 
 _INDEX_TO_LABEL = {v: k for k, v in LABEL_MAP.items()}
 
@@ -54,7 +62,9 @@ _INDEX_TO_LABEL = {v: k for k, v in LABEL_MAP.items()}
 # Module-level singletons — populated at startup by ``load_models()``
 # ---------------------------------------------------------------------------
 _regression_model: Any = None
-_classification_model: Any = None
+_calibrated_classifier: Any = None
+_hybrid_delta: float = 7.0
+_hybrid_p_threshold: float = 0.35
 _feature_store: Optional[pd.DataFrame] = None
 
 
@@ -71,34 +81,44 @@ class StationNotFoundError(LookupError):
 # ---------------------------------------------------------------------------
 
 def load_models() -> None:
-    """Load regression + classification models and the feature store once.
+    """Load regression + calibrated hybrid classifier and the feature store once.
 
     Raises
     ------
     ModelNotFoundError
-        If either ``.joblib`` file or the feature-store parquet is missing.
+        If any required artifact is missing.
     """
-    global _regression_model, _classification_model, _feature_store
+    global _regression_model, _calibrated_classifier, _hybrid_delta, _hybrid_p_threshold, _feature_store
 
-    for path in (REGRESSION_MODEL_PATH, CLASSIFICATION_MODEL_PATH, FEATURE_STORE_PATH):
+    for path in (REGRESSION_MODEL_PATH, CALIBRATED_CLASSIFIER_PATH, FEATURE_STORE_PATH):
         if not path.exists():
             raise ModelNotFoundError(f"Required artifact missing: {path}")
 
     _regression_model = joblib.load(REGRESSION_MODEL_PATH)
-    _classification_model = joblib.load(CLASSIFICATION_MODEL_PATH)
+    _calibrated_classifier = joblib.load(CALIBRATED_CLASSIFIER_PATH)
     _feature_store = pd.read_parquet(FEATURE_STORE_PATH)
     _feature_store["data_giorno"] = pd.to_datetime(_feature_store["data_giorno"])
 
+    if HYBRID_PARAMS_PATH.exists():
+        import json
+        with open(HYBRID_PARAMS_PATH, encoding="utf-8") as f:
+            params = json.load(f)
+        _hybrid_delta = float(params.get("best_delta", 7.0))
+        _hybrid_p_threshold = float(params.get("best_p_threshold", 0.35))
+
     log.info(
-        "Predictor loaded: regression=%s, classification=%s, feature_store=%d rows.",
+        "Predictor loaded: regression=%s, calibrated_classifier=%s, "
+        "hybrid(delta=%.1f, p=%.2f), feature_store=%d rows.",
         REGRESSION_MODEL_PATH.name,
-        CLASSIFICATION_MODEL_PATH.name,
+        CALIBRATED_CLASSIFIER_PATH.name,
+        _hybrid_delta,
+        _hybrid_p_threshold,
         len(_feature_store),
     )
 
 
 def _require_loaded() -> pd.DataFrame:
-    if _feature_store is None or _regression_model is None or _classification_model is None:
+    if _feature_store is None or _regression_model is None or _calibrated_classifier is None:
         raise ModelNotFoundError("Predictor not initialised — call load_models() first.")
     return _feature_store
 
@@ -314,6 +334,43 @@ def _pm10_to_label(pm10: float) -> str:
     return PM10_LABELS[-1]
 
 
+def _pm10_to_class_index(pm10: float) -> int:
+    for i, threshold in enumerate(ALERT_THRESHOLDS):
+        if pm10 < threshold:
+            return i
+    return len(ALERT_THRESHOLDS)
+
+
+def _apply_hybrid_rule(
+    pm10_hat: float,
+    proba_cls: np.ndarray,
+    delta: float,
+    p_threshold: float,
+) -> tuple[int, str]:
+    """Return (class_index, source_tag) using the hybrid regression+classifier rule.
+
+    Outside the threshold zone the regressor decides alone.  Inside the zone,
+    a calibrated classifier can escalate to the more severe class when it is
+    sufficiently confident (p_severe >= p_threshold).
+    """
+    class_reg = _pm10_to_class_index(pm10_hat)
+    class_cls = int(np.argmax(proba_cls))
+    d = min(abs(pm10_hat - t) for t in ALERT_THRESHOLDS)
+
+    if d > delta:
+        return class_reg, "regression"
+
+    if class_cls == class_reg:
+        return class_reg, "hybrid_agreement"
+
+    class_severe = max(class_reg, class_cls)
+    p_severe = float(proba_cls[class_severe])
+    if p_severe >= p_threshold:
+        return class_severe, "hybrid_override"
+
+    return class_reg, "hybrid_no_override"
+
+
 def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
     """Predict PM10 + alert class for the next *days* calendar days.
 
@@ -374,7 +431,10 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
         )
 
         pm10_pred = float(_regression_model.predict(X_future)[0])
-        alert_index = int(_classification_model.predict(X_future)[0])
+        proba_cls = _calibrated_classifier.predict_proba(X_future)[0]
+        alert_index, alert_source = _apply_hybrid_rule(
+            pm10_pred, proba_cls, _hybrid_delta, _hybrid_p_threshold
+        )
         alert_label = _INDEX_TO_LABEL.get(alert_index, _pm10_to_label(pm10_pred))
 
         predictions.append({
@@ -382,6 +442,7 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
             "pm10_predicted": round(pm10_pred, 2),
             "alert_class": alert_label,
             "alert_index": alert_index,
+            "alert_source": alert_source,
             "weather_used": {
                 "temp_mean": weather.get("temp_mean"),
                 "wind_speed_mean": weather.get("wind_speed_mean"),

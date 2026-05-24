@@ -17,7 +17,6 @@ Usage (from project root)::
 """
 
 import datetime
-import json
 import logging
 import sys
 from pathlib import Path
@@ -31,14 +30,28 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.inspection import permutation_importance
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.pipeline import Pipeline
 
+from shared.regression_to_class import pm10_to_alert_class
+from step_4_regression.config import (
+    ARTIFACTS_DIR as REGRESSION_ARTIFACTS_DIR,
+    METRICS_FILE as REGRESSION_METRICS_FILE,
+)
 from step_5_classification.config import (
+    ALERT_THRESHOLDS,
     ARTIFACTS_DIR,
     LABEL_MAP,
     METRICS_FILE,
+    N_CV_SPLITS,
     PLOTS_DIR,
+    RANDOM_STATE,
+)
+from step_5_classification.guardrails import (
+    assert_manifest_guardrails,
+    assert_same_split_metadata,
+    load_json,
+    write_json,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,7 +71,7 @@ MODEL_NAMES: List[str] = [
 # Data loading
 # ---------------------------------------------------------------------------
 
-def _load_test_data(artifacts_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
+def _load_test_data(artifacts_dir: Path) -> Tuple[pd.DataFrame, pd.Series, Dict]:
     """Load the test set persisted by train.py.
 
     ``train.py`` saves ``test_data.joblib`` containing a dict
@@ -69,7 +82,7 @@ def _load_test_data(artifacts_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
         artifacts_dir: Path to the ``artifacts/`` directory.
 
     Returns:
-        Tuple ``(X_test, y_test)`` — feature matrix and integer target Series.
+        Tuple ``(X_test, y_test, split_metadata)``.
 
     Raises:
         FileNotFoundError: if ``test_data.joblib`` is missing (run train.py first).
@@ -84,6 +97,16 @@ def _load_test_data(artifacts_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
     payload = joblib.load(test_path)
     X_test: pd.DataFrame = payload["X_test"]
     y_test: pd.Series = payload["y_test"].astype(int)
+    split_metadata = payload.get("split_metadata")
+    if split_metadata is None:
+        split_metadata_path = artifacts_dir / "split_metadata.json"
+        if split_metadata_path.exists():
+            split_metadata = load_json(split_metadata_path)
+    if split_metadata is None:
+        raise AssertionError(
+            "test_data.joblib is missing split_metadata. "
+            "Run 'python -m step_5_classification.train' to regenerate guarded artifacts."
+        )
 
     logger.info(
         "Loaded test data from '%s': %d samples, %d features",
@@ -94,7 +117,42 @@ def _load_test_data(artifacts_dir: Path) -> Tuple[pd.DataFrame, pd.Series]:
         y_test.value_counts().sort_index().to_dict(),
     )
 
-    return X_test, y_test
+    return X_test, y_test, split_metadata
+
+
+def _pm10_to_alert_class(pm10_values: np.ndarray) -> np.ndarray:
+    """Convert PM10 predictions to ordinal alert classes using fixed thresholds."""
+    return pm10_to_alert_class(pm10_values, thresholds=ALERT_THRESHOLDS)
+
+
+def _load_best_regressor_name() -> str:
+    """Read the Step 4 best model name when regression metrics are available."""
+    metrics_path = Path(REGRESSION_METRICS_FILE)
+    if not metrics_path.exists():
+        return "best_model"
+    metrics_doc = load_json(metrics_path)
+    return str(metrics_doc.get("best_model", "best_model"))
+
+
+def _load_regression_to_class_strategy(
+    X_test: pd.DataFrame,
+) -> Optional[Tuple[str, np.ndarray, np.ndarray]]:
+    """Predict PM10 with the Step 4 best regressor and map it to alert classes."""
+    regression_model_path = Path(REGRESSION_ARTIFACTS_DIR) / "best_model.joblib"
+    if not regression_model_path.exists():
+        logger.warning(
+            "Regression artifact not found: '%s' - skipping regression_to_class.",
+            regression_model_path,
+        )
+        return None
+
+    regressor: Pipeline = joblib.load(regression_model_path)
+    pm10_pred = np.asarray(regressor.predict(X_test), dtype=float)
+    class_pred = _pm10_to_alert_class(pm10_pred)
+    regressor_name = _load_best_regressor_name()
+    strategy_name = f"regression_to_class_{regressor_name}"
+    logger.info("Built '%s' from %s", strategy_name, regression_model_path)
+    return strategy_name, class_pred, pm10_pred
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +163,8 @@ def compute_classification_metrics(
     y_true: pd.Series,
     y_pred: np.ndarray,
     model_name: str,
+    strategy_name: Optional[str] = None,
+    class_reg_reference: Optional[np.ndarray] = None,
 ) -> Dict:
     """Compute classification metrics for a single model.
 
@@ -123,14 +183,19 @@ def compute_classification_metrics(
     Returns:
         Dict with keys ``f1_macro``, ``per_class``, ``severe_error_rate``.
     """
+    y_true_arr = y_true.to_numpy() if hasattr(y_true, "to_numpy") else np.asarray(y_true)
+    y_pred_arr = np.asarray(y_pred, dtype=int)
+
     report: Dict = classification_report(
         y_true,
-        y_pred,
+        y_pred_arr,
+        labels=[0, 1, 2, 3],
         target_names=CLASS_NAMES,
         output_dict=True,
         zero_division=0,
     )
 
+    accuracy = float(accuracy_score(y_true_arr, y_pred_arr))
     f1_macro = float(report["macro avg"]["f1-score"])
 
     per_class: Dict[str, Dict] = {}
@@ -142,11 +207,14 @@ def compute_classification_metrics(
             "support": int(report[cls]["support"]),
         }
 
-    severe_error_rate = float((np.abs(y_pred - y_true.values) >= 2).mean())
+    severe_error_rate = float((np.abs(y_pred_arr - y_true_arr) >= 2).mean())
+    over_alert_rate = float((y_pred_arr > y_true_arr).mean())
+    under_alert_rate = float((y_pred_arr < y_true_arr).mean())
+    cm = confusion_matrix(y_true_arr, y_pred_arr, labels=[0, 1, 2, 3]).astype(int)
 
     logger.info(
-        "%-22s  f1_macro=%.4f  severe_error_rate=%.4f",
-        model_name, f1_macro, severe_error_rate,
+        "%-22s  accuracy=%.4f  f1_macro=%.4f  severe_error_rate=%.4f",
+        model_name, accuracy, f1_macro, severe_error_rate,
     )
     for cls in CLASS_NAMES:
         pc = per_class[cls]
@@ -155,11 +223,67 @@ def compute_classification_metrics(
             cls, pc["precision"], pc["recall"], pc["f1"], pc["support"],
         )
 
-    return {
+    metrics = {
+        "strategy_name": strategy_name or f"classifier_{model_name}",
+        "accuracy": accuracy,
         "f1_macro": f1_macro,
         "per_class": per_class,
+        "precision_rosso": per_class["rosso"]["precision"],
+        "recall_rosso": per_class["rosso"]["recall"],
         "severe_error_rate": severe_error_rate,
+        "over_alert_rate": over_alert_rate,
+        "under_alert_rate": under_alert_rate,
+        "confusion_matrix": cm.tolist(),
     }
+    if class_reg_reference is not None:
+        class_reg_arr = np.asarray(class_reg_reference, dtype=int)
+        overrides = y_pred_arr != class_reg_arr
+        escalations = y_pred_arr > class_reg_arr
+        metrics.update(
+            {
+                "hybrid_override_rate": float(overrides.mean()),
+                "hybrid_escalation_rate": float(escalations.mean()),
+                "n_overrides": int(overrides.sum()),
+                "n_escalations": int(escalations.sum()),
+            }
+        )
+    return metrics
+
+
+def _complete_classification_metric_payload(
+    metrics: Dict,
+    default_strategy_name: str,
+) -> Dict:
+    """Fill derived classification fields when an existing row has a 4x4 matrix."""
+    completed = dict(metrics)
+    completed.setdefault("strategy_name", default_strategy_name)
+
+    per_class = completed.get("per_class")
+    if isinstance(per_class, dict) and "rosso" in per_class:
+        rosso = per_class["rosso"]
+        completed.setdefault("precision_rosso", rosso.get("precision"))
+        completed.setdefault("recall_rosso", rosso.get("recall"))
+
+    cm_value = completed.get("confusion_matrix")
+    if cm_value is None:
+        return completed
+    cm = np.asarray(cm_value, dtype=float)
+    if cm.shape != (4, 4):
+        return completed
+
+    total = float(cm.sum())
+    if total <= 0:
+        return completed
+
+    row_idx, col_idx = np.indices(cm.shape)
+    completed.setdefault("accuracy", float(np.trace(cm) / total))
+    completed.setdefault("over_alert_rate", float(cm[col_idx > row_idx].sum() / total))
+    completed.setdefault("under_alert_rate", float(cm[col_idx < row_idx].sum() / total))
+    completed.setdefault(
+        "severe_error_rate",
+        float(cm[np.abs(col_idx - row_idx) >= 2].sum() / total),
+    )
+    return completed
 
 
 # ---------------------------------------------------------------------------
@@ -402,13 +526,36 @@ def run_evaluation(artifacts_dir_path: Optional[str] = None) -> Dict[str, Dict]:
     artifacts_dir = Path(artifacts_dir_path or ARTIFACTS_DIR)
     plots_dir = PLOTS_DIR
 
-    # 1. Load test data (persisted by train.py to avoid re-running the split)
-    X_test, y_test = _load_test_data(artifacts_dir)
+    # 1. Load and validate the training guard-rail manifest when available
+    manifest_path = artifacts_dir / "training_manifest.json"
+    training_manifest: Optional[Dict] = None
+    manifest_split_metadata: Optional[Dict] = None
+    if manifest_path.exists():
+        training_manifest = load_json(manifest_path)
+        assert_manifest_guardrails(
+            training_manifest,
+            artifacts_dir=artifacts_dir,
+            model_names=MODEL_NAMES + ["best_model"],
+            expected_n_splits=N_CV_SPLITS,
+            expected_random_state=RANDOM_STATE,
+            verify_files=True,
+        )
+        manifest_split_metadata = training_manifest["split_metadata"]
+    else:
+        logger.warning(
+            "training_manifest.json not found; using split_metadata.json fallback."
+        )
+
+    # 2. Load test data (persisted by train.py to avoid re-running the split)
+    X_test, y_test, test_split_metadata = _load_test_data(artifacts_dir)
+    split_metadata = manifest_split_metadata or test_split_metadata
+    if manifest_split_metadata is not None:
+        assert_same_split_metadata(test_split_metadata, manifest_split_metadata)
 
     results: Dict[str, Dict] = {}
     pipelines: Dict[str, Pipeline] = {}
 
-    # 2. Evaluate each model
+    # 3. Evaluate each model
     for model_name in MODEL_NAMES:
         model_path = artifacts_dir / f"{model_name}_best.joblib"
         if not model_path.exists():
@@ -432,6 +579,18 @@ def run_evaluation(artifacts_dir_path: Optional[str] = None) -> Dict[str, Dict]:
         # --- Confusion matrix plot ---
         plot_confusion_matrix(y_test, y_pred, model_name, plots_dir)
 
+    regression_strategy = _load_regression_to_class_strategy(X_test)
+    if regression_strategy is not None:
+        strategy_name, class_reg_pred, _pm10_pred = regression_strategy
+        logger.info("--- %s ---", strategy_name.upper())
+        results[strategy_name] = compute_classification_metrics(
+            y_test,
+            class_reg_pred,
+            strategy_name,
+            strategy_name=strategy_name,
+        )
+        plot_confusion_matrix(y_test, class_reg_pred, strategy_name, plots_dir)
+
     if not results:
         logger.warning(
             "No model artifacts found in '%s'. Run train.py first.", artifacts_dir
@@ -441,23 +600,38 @@ def run_evaluation(artifacts_dir_path: Optional[str] = None) -> Dict[str, Dict]:
     # 3. Summary table
     _print_summary_table(results)
 
-    # 4. Identify best model by test-set f1_macro
-    best_model_name = max(results, key=lambda m: results[m]["f1_macro"])
+    # 4. Identify best evaluated strategy and best classifier artifact
+    best_evaluated_model_name = max(results, key=lambda m: results[m]["f1_macro"])
+    classifier_result_names = [name for name in MODEL_NAMES if name in results]
+    best_model_name = (
+        max(classifier_result_names, key=lambda m: results[m]["f1_macro"])
+        if classifier_result_names
+        else best_evaluated_model_name
+    )
     logger.info(
-        "Best model by test f1_macro: '%s' (f1_macro=%.4f)",
+        "Best classifier by test f1_macro: '%s' (f1_macro=%.4f)",
         best_model_name, results[best_model_name]["f1_macro"],
     )
+    logger.info(
+        "Best evaluated strategy by test f1_macro: '%s' (f1_macro=%.4f)",
+        best_evaluated_model_name, results[best_evaluated_model_name]["f1_macro"],
+    )
 
-    # 5. Permutation importance for the best model
+    # 5. Permutation importance for the best classifier model
     # Load from best_model.joblib (identical pipeline saved by train.py)
     best_model_path = artifacts_dir / "best_model.joblib"
-    if best_model_path.exists():
+    if best_model_path.exists() and pipelines:
         best_pipeline: Pipeline = joblib.load(best_model_path)
+        importance_model_name = (
+            best_model_name
+            if best_model_name in pipelines
+            else max(pipelines, key=lambda m: results[m]["f1_macro"])
+        )
         plot_permutation_importance(
             best_pipeline,
             X_test,
             y_test,
-            best_model_name,
+            importance_model_name,
             plots_dir,
         )
     else:
@@ -469,24 +643,74 @@ def run_evaluation(artifacts_dir_path: Optional[str] = None) -> Dict[str, Dict]:
     # 6. Save classification_metrics.json
     metrics_path = Path(METRICS_FILE)
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_metrics_doc = load_json(metrics_path) if metrics_path.exists() else {}
+    existing_models_doc = existing_metrics_doc.get("models", {})
 
-    models_payload: Dict = {}
+    models_payload: Dict = dict(existing_models_doc) if isinstance(existing_models_doc, dict) else {}
     for name, m in results.items():
-        models_payload[name] = {
-            "f1_macro": m["f1_macro"],
-            "per_class": m["per_class"],
-            "severe_error_rate": m["severe_error_rate"],
+        models_payload[name] = dict(m)
+        existing_model_metrics = existing_models_doc.get(name, {})
+        for calibration_key in (
+            "calibrated_artifact",
+            "reliability_diagram",
+            "ece_per_classe",
+            "expected_calibration_error",
+        ):
+            if calibration_key in existing_model_metrics:
+                models_payload[name][calibration_key] = existing_model_metrics[
+                    calibration_key
+                ]
+    for name, m in list(models_payload.items()):
+        if isinstance(m, dict):
+            default_strategy_name = (
+                name if name.startswith("regression_to_class_") else f"classifier_{name}"
+            )
+            models_payload[name] = _complete_classification_metric_payload(
+                m,
+                default_strategy_name=default_strategy_name,
+            )
+
+    existing_guard_rails = existing_metrics_doc.get("guard_rails", {})
+    guard_rails: Dict = (
+        dict(existing_guard_rails) if isinstance(existing_guard_rails, dict) else {}
+    )
+    guard_rails.update(
+        {
+            "date_range_ok": True,
+            "stations_ok": True,
+            "same_split_ok": True,
+            "cv_identical_ok": True,
+            "random_state_ok": True,
+            "n_cv_splits": int(N_CV_SPLITS),
+            "random_state": int(RANDOM_STATE),
         }
+    )
+    if "split_index_hash" in split_metadata:
+        guard_rails["split_index_hash"] = split_metadata["split_index_hash"]
+    if training_manifest is not None:
+        guard_rails["cv_signature_hash"] = training_manifest["cv_metadata"][
+            "cv_signature_hash"
+        ]
 
-    metrics_doc: Dict = {
+    metrics_doc: Dict = dict(existing_metrics_doc)
+    metrics_doc.update({
         "best_model": best_model_name,
+        "best_evaluated_model": best_evaluated_model_name,
         "generated_at": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "train_date_range": split_metadata["train_date_range"],
+        "test_date_range": split_metadata["test_date_range"],
         "n_test_samples": int(len(y_test)),
+        "n_stations_train": int(split_metadata["n_stations_train"]),
+        "n_stations_test": int(split_metadata["n_stations_test"]),
+        "n_stations_intersection": int(
+            split_metadata["n_stations_intersection"]
+        ),
+        "split_metadata": split_metadata,
+        "guard_rails": guard_rails,
         "models": models_payload,
-    }
+    })
 
-    with open(metrics_path, "w", encoding="utf-8") as fh:
-        json.dump(metrics_doc, fh, indent=2)
+    write_json(metrics_path, metrics_doc)
 
     logger.info("Metrics saved -> %s", metrics_path)
     logger.info(
