@@ -4,7 +4,7 @@
 **Dataset period**: 2024-01-01 → 2026-05-07  
 **Last model run**: 2026-06-02  
 **Language**: Python 3.11  
-**Repository root**: `DataScience_ExamProject/`
+**Repository root**: `Data-Science-Exam-Project/`
 
 ---
 
@@ -79,7 +79,7 @@ The four-class alert system used throughout this project is defined as instantan
 The project is organised as a set of sequentially dependent Python packages, each corresponding to one step of the pipeline. All steps share a common `shared/` utility module.
 
 ```
-DataScience_ExamProject/
+Data-Science-Exam-Project/
 │
 ├── step_1_collection/      # Data collection from ARPA + Open-Meteo → JSON blobs
 │   ├── collector.py        # Core fetch functions (measurements, weather)
