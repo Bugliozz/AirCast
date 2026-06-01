@@ -25,6 +25,10 @@ step_5_classification/artifacts/*.joblib
 
 # Plots (generated, not tracked)
 step_3_eda/plots/
+step_4_regression/artifacts/plots/
+step_5_classification/artifacts/plots/
+step_6_clustering/artifacts/plots/
+step_6_clustering/artifacts/cluster_map.html
 
 # Data (large, stored on GCS)
 data/
