@@ -1,4 +1,4 @@
-"""Tests for step 3.2 — Log-transform del target.
+"""Tests for step 3.2 — Log-transform of the target.
 
 Covers:
 - np.log1p / np.expm1 are exact inverses (no rounding surprises)

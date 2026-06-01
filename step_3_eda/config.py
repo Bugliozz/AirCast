@@ -16,12 +16,12 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "airpass")
 # ──────────────────────────────────────────────────────────────────────────────
 # PM10 alert-class thresholds  (EU 2008/50/CE + WHO 2021)
 #
-# NOTE: these 4 classes sono bin di severità GIORNALIERA derivati dai valori
-# limite UE/WHO (20 = WHO AQG 2021; 35 = livello intermedio; 50 = limite UE
-# giornaliero da non superare più di 35 volte/anno). NON coincidono con le
-# "allerte operative" dei piani antismog regionali (es. Lombardia, DGR
-# 449/2018) che scattano dopo N giorni consecutivi > 50 µg/m³. La scelta
-# istantanea rende il target bilanciato e adatto a classificazione supervised.
+# NOTE: these 4 classes are daily severity bins derived from EU/WHO limit
+# values (20 = WHO AQG 2021; 35 = intermediate level; 50 = daily EU limit
+# not to be exceeded more than 35 times/year). They DO NOT coincide with the
+# "operational alerts" of regional anti-smog plans (e.g. Lombardy, DGR
+# 449/2018) which trigger after N consecutive days > 50 µg/m³. The instantaneous
+# choice makes the target balanced and suitable for supervised classification.
 # ──────────────────────────────────────────────────────────────────────────────
 PM10_THRESHOLDS: list[float] = [0, 20, 35, 50, float("inf")]
 PM10_LABELS: list[str] = ["verde", "giallo", "arancio", "rosso"]

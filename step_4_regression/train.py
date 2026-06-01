@@ -137,7 +137,7 @@ def build_xgboost_pipeline(X_train: pd.DataFrame) -> Pipeline:
     Tree-based models are scale-invariant, so ``StandardScaler`` is omitted.
     The ``TransformedTargetRegressor`` applies ``np.log1p`` to *y* before
     fitting so that XGBoost optimises RMSE in log-space: large errors on high
-    PM10 values (picchi) receive relatively more weight, reducing the systematic
+    PM10 values (peaks) receive relatively more weight, reducing the systematic
     under-prediction of peaks visible in the diagnostic plot.
 
     Parameter-grid keys follow the nested path convention::

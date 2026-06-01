@@ -8,7 +8,7 @@ CREATE DATABASE IF NOT EXISTS airquality
 USE airquality;
 
 -- ──────────────────────────────────────────────
--- Monitoring stations (anagrafica stazioni)
+-- Monitoring stations (station registry)
 -- ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS stations (
     idstazione    VARCHAR(20)   NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS stations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ──────────────────────────────────────────────
--- Sensors (anagrafica sensori)
+-- Sensors (sensor registry)
 -- ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sensors (
     idsensore     VARCHAR(20)   NOT NULL,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS sensors (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ──────────────────────────────────────────────
--- Measurements  (misure orarie / giornaliere)
+-- Measurements  (hourly / daily measurements)
 -- PM10 / PM2.5 → one record per day (T00:00:00)
 -- NO2 / O3 / CO → one record per hour
 -- ──────────────────────────────────────────────

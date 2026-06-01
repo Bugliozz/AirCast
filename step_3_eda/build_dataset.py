@@ -132,7 +132,7 @@ def _add_lag_and_rolling_features(df: pd.DataFrame) -> pd.DataFrame:
         )
         df["pm10_diff"] = df["pm10_lag1"] - df["pm10_lag2"]
 
-    # Come da Brainstorm: Lag variabili meteo chiave (1-day, 2-day lag)
+    # As per Brainstorm: Lag of key weather variables (1-day, 2-day lag)
     for col in ["pressure_mean", "wind_speed_mean", "blh_mean", "temp_mean"]:
         if col in df.columns:
             df[f"{col}_lag1"] = df.groupby("idstazione")[col].shift(1)
@@ -165,7 +165,7 @@ def _add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
         giorno_settimana=dow,                       # 0=Mon … 6=Sun
         is_weekend=dow.isin([5, 6]),
         heating_season=mese.isin([10, 11, 12, 1, 2, 3]).astype(int),
-        # Cyclic encoding: Dicembre(12) e Gennaio(1) risultano vicini
+        # Cyclic encoding: December (12) and January (1) end up close to each other
         mese_sin=np.sin(2 * np.pi * mese / 12),
         mese_cos=np.cos(2 * np.pi * mese / 12),
         dow_sin=np.sin(2 * np.pi * dow / 7),

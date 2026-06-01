@@ -2,44 +2,44 @@
 setlocal
 cd /d "%~dp0.."
 
-echo === Download JSON da GCS in data/raw/ ===
+echo === Download JSON from GCS to data/raw/ ===
 echo.
 
 call venv\Scripts\activate.bat
 
-set /p START_DATE=Data inizio (YYYY-MM-DD):
-set /p END_DATE=Data fine   (YYYY-MM-DD):
+set /p START_DATE=Start date (YYYY-MM-DD):
+set /p END_DATE=End date   (YYYY-MM-DD):
 
 if "%START_DATE%"=="" (
-    echo ERRORE: data inizio obbligatoria.
+    echo ERROR: start date is required.
     pause
     exit /b 1
 )
 if "%END_DATE%"=="" (
-    echo ERRORE: data fine obbligatoria.
+    echo ERROR: end date is required.
     pause
     exit /b 1
 )
 
 python scripts\sync_gcs.py --into-raw --start %START_DATE% --end %END_DATE%
 if errorlevel 1 if not errorlevel 2 (
-    echo ERRORE durante il download.
+    echo ERROR occurred during download.
     pause
     exit /b 1
 )
 
 echo.
-echo === Download completato ===
+echo === Download complete ===
 echo.
-set /p DO_PIPELINE=Vuoi eseguire ingest + EDA + training (regression + classification)? [y/N]:
+set /p DO_PIPELINE=Do you want to run ingest + EDA + training (regression + classification)? [y/N]:
 if /i not "%DO_PIPELINE%"=="y" (
-    echo Saltato. Esegui scripts\run_pipeline.bat manualmente quando vuoi.
+    echo Skipped. Run scripts\run_pipeline.bat manually whenever you want.
     pause
     exit /b 0
 )
 
 echo.
-echo === Avvio pipeline completa ===
+echo === Launching full pipeline ===
 set PIPELINE_MODE=1
 call scripts\run_pipeline.bat
 exit /b %errorlevel%

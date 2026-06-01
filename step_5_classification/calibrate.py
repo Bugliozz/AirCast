@@ -352,14 +352,14 @@ def _write_calibration_metrics(
             "reliability_diagram": record["reliability_diagram"],
             "f1_macro_baseline": float(record["f1_macro_baseline"]),
             "expected_calibration_error": record["expected_calibration_error"],
-            "ece_per_classe": record["ece_per_classe"],
+            "ece_per_class": record["ece_per_class"],
         }
 
         model_metrics = models_doc.setdefault(model_name, {})
         model_metrics["strategy_name"] = f"classifier_{model_name}_calibrated"
         model_metrics["calibrated_artifact"] = record["artifact_path"]
         model_metrics["reliability_diagram"] = record["reliability_diagram"]
-        model_metrics["ece_per_classe"] = record["ece_per_classe"]
+        model_metrics["ece_per_class"] = record["ece_per_class"]
         model_metrics["expected_calibration_error"] = record[
             "expected_calibration_error"
         ]
@@ -606,7 +606,7 @@ def run_calibration(artifacts_dir_path: str | None = None) -> Path:
                 "legacy_artifact_path": legacy_path.as_posix() if legacy_path else None,
                 "reliability_diagram": plot_path.as_posix(),
                 "f1_macro_baseline": float(candidate["f1_macro"]),
-                "ece_per_classe": ece_after,
+                "ece_per_class": ece_after,
                 "expected_calibration_error": {
                     "n_bins": int(ECE_N_BINS),
                     "per_class": {

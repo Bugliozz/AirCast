@@ -2,12 +2,12 @@
 
 Loads trained model artifacts and evaluates them on the holdout test set.
 
-Task 3.5.1 — Metriche su test holdout:
-- RMSE (metrica primaria)
-- MAE (robustezza agli outlier)
-- R² (varianza spiegata)
-- RMSE separato per fascia di allerta: verde / giallo / arancio / rosso
-- Tabella riassuntiva di tutti i modelli
+Task 3.5.1 — Metrics on holdout test:
+- RMSE (primary metric)
+- MAE (robustness to outliers)
+- R² (explained variance)
+- RMSE stratified by alert class: verde / giallo / arancio / rosso
+- Summary table of all models
 
 Task 3.5.2 — Diagnostic plots:
 - Scatter y_pred vs y_true (with identity line)
@@ -375,7 +375,7 @@ def plot_diagnostics(
     ax.grid(True, alpha=0.3)
 
     # ------------------------------------------------------------------
-    # 2. Residuals vs y_pred (omoschedasticità)
+    # 2. Residuals vs y_pred (homoscedasticity)
     # ------------------------------------------------------------------
     ax = axes[0, 1]
     ax.scatter(y_pred, residuals, alpha=0.3, s=10, color="darkorange")
@@ -386,7 +386,7 @@ def plot_diagnostics(
     ax.grid(True, alpha=0.3)
 
     # ------------------------------------------------------------------
-    # 3. Residuals vs time (assenza di trend)
+    # 3. Residuals vs time (no trend)
     # ------------------------------------------------------------------
     ax = axes[1, 0]
     ax.scatter(dates_dt, residuals, alpha=0.3, s=8, color="green")
@@ -691,10 +691,10 @@ def run_evaluation(parquet_path: str) -> Dict[str, Dict]:
     Loads model artifacts from ``ARTIFACTS_DIR``, reproduces the temporal
     split used during training, and computes for each model:
 
-    - RMSE (metrica primaria, ug/m3)
-    - MAE  (robustezza agli outlier, ug/m3)
-    - R²   (varianza spiegata)
-    - RMSE per fascia: verde / giallo / arancio / rosso
+    - RMSE (primary metric, ug/m3)
+    - MAE  (robustness to outliers, ug/m3)
+    - R²   (explained variance)
+    - RMSE per class: verde / giallo / arancio / rosso
 
     Finally prints a summary table (task 3.5.1), generates all diagnostic and
     feature-importance plots (tasks 3.5.2–3.5.3), saves the best pipeline as
@@ -778,7 +778,7 @@ def run_evaluation(parquet_path: str) -> Dict[str, Dict]:
             )
             plot_native_feature_importance(pl, mn, PLOTS_DIR)
 
-    # --- Task 3.5.4: salvataggio artifacts ----------------------------------
+    # --- Task 3.5.4: Save artifacts ----------------------------------
     artifacts_dir = Path(ARTIFACTS_DIR)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 

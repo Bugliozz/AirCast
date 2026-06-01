@@ -654,7 +654,7 @@ def run_evaluation(artifacts_dir_path: Optional[str] = None) -> Dict[str, Dict]:
         for calibration_key in (
             "calibrated_artifact",
             "reliability_diagram",
-            "ece_per_classe",
+            "ece_per_class",
             "expected_calibration_error",
         ):
             if calibration_key in existing_model_metrics:

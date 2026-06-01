@@ -37,9 +37,9 @@ if errorlevel 1 goto error
 echo.
 
 echo ==========================================
-echo   Pipeline completa!
-echo   Risultati in step_4_regression/artifacts/
-echo             step_5_classification/artifacts/
+echo   Pipeline complete!
+echo   Results in step_4_regression/artifacts/
+echo              step_5_classification/artifacts/
 echo ==========================================
 pause
 exit /b 0
@@ -47,7 +47,7 @@ exit /b 0
 :error
 echo.
 echo ==========================================
-echo   ERRORE: pipeline interrotta.
+echo   ERROR: pipeline aborted.
 echo ==========================================
 pause
 exit /b 1
