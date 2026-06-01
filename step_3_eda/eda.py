@@ -48,6 +48,7 @@ from step_3_eda.plots import (
     plot_stagnation_vs_pm10,
     plot_weather_vs_pm10,
 )
+from step_3_eda.raw import load_no2_hourly_from_raw
 from step_3_eda.rmt import run_rmt_diagnostic, save_rmt_artifacts
 
 logging.basicConfig(
@@ -145,8 +146,16 @@ def main() -> None:
         plot_stagnation_vs_pm10(df, PLOTS_DIR)
         plot_industrial_vs_pm10(df, PLOTS_DIR)
 
-        # NO2 hourly profile (separate query, hourly granularity)
-        no2_h = load_no2_hourly(conn)
+        # NO2 hourly profile (hourly granularity; prefer local raw JSON so
+        # this artifact can be regenerated without an extra DB round-trip).
+        try:
+            no2_h = load_no2_hourly_from_raw()
+            if no2_h.empty:
+                log.warning("Raw NO2 hourly data is empty; falling back to MySQL.")
+                no2_h = load_no2_hourly(conn)
+        except (FileNotFoundError, ValueError) as exc:
+            log.warning("Raw NO2 hourly data unavailable (%s); falling back to MySQL.", exc)
+            no2_h = load_no2_hourly(conn)
         plot_no2_hourly_profile(no2_h, PLOTS_DIR)
 
         # ── 7. Save EDA-imputed dataset (for visualization/notebooks only) ──

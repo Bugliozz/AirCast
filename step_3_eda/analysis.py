@@ -72,8 +72,14 @@ def class_distribution(df: pd.DataFrame) -> pd.DataFrame:
     counts = df["classe_allerta"].value_counts().reindex(
         ["verde", "giallo", "arancio", "rosso"], fill_value=0,
     )
+    display_labels = {
+        "verde": "Green",
+        "giallo": "Yellow",
+        "arancio": "Orange",
+        "rosso": "Red",
+    }
     dist = pd.DataFrame({
-        "classe": counts.index,
+        "class": [display_labels.get(label, label) for label in counts.index],
         "count": counts.values,
         "pct": (counts.values / counts.sum() * 100).round(1),
     })

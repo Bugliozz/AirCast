@@ -104,8 +104,8 @@ def build_rows(metrics: dict) -> list[dict]:
 
 def print_table(rows: list[dict]) -> None:
     header = (
-        "| Strategia | Fase | f1_macro | severe_error_rate | recall_rosso |"
-        " precision_rosso | over_alert_rate | RMSE_rosso | Vincoli §8 |"
+        "| Strategy | Phase | f1_macro | severe_error_rate | recall_rosso |"
+        " precision_rosso | over_alert_rate | RMSE_rosso | Section 8 Constraints |"
     )
     sep = "|---|---|---:|---:|---:|---:|---:|---:|:---:|"
     print(header)
@@ -125,9 +125,9 @@ def print_table(rows: list[dict]) -> None:
 
 def print_legend() -> None:
     print()
-    print(f"Vincoli hard S8: C1 = severe_error_rate <= {SEVERE_ERROR_RATE_MAX*100:.1f}%,"
+    print(f"Section 8 hard constraints: C1 = severe_error_rate <= {SEVERE_ERROR_RATE_MAX*100:.1f}%,"
           f" C2 = recall_rosso >= {RECALL_ROSSO_MIN}")
-    print("PASS = entrambi rispettati. C1-FAIL / C2-FAIL = vincolo fallito.")
+    print("PASS = both constraints satisfied. C1-FAIL / C2-FAIL = failed constraint.")
 
 
 def main() -> None:
@@ -142,13 +142,13 @@ def main() -> None:
     print_table(rows)
     print_legend()
 
-    passing = [r for r in rows if r["constraints"] == "✅"]
+    passing = [r for r in rows if r["constraints"] == "PASS"]
     if passing:
         best = max(passing, key=lambda r: r["f1_macro"] or 0.0)
         print(f"\n**Production-ready:** `{best['strategy']}` (f1_macro={best['f1_macro']:.4f})")
     else:
         best_research = max(rows, key=lambda r: r["f1_macro"] or 0.0)
-        print(f"\n**Nessuna strategia rispetta entrambi i vincoli §8.**")
+        print(f"\n**No strategy satisfies both Section 8 constraints.**")
         print(f"Best research candidate: `{best_research['strategy']}`"
               f" (f1_macro={best_research['f1_macro']:.4f},"
               f" recall_rosso={best_research['recall_rosso']:.4f})")

@@ -21,7 +21,7 @@ nrt_pm10_sensors = r.json()
 p(f"Found {len(nrt_pm10_sensors)} PM10 sensors in NRT registry")
 for s in nrt_pm10_sensors[:8]:
     p(f"  idsensore={s['idsensore']}, idstazione={s['idstazione']}, "
-      f"nome={s['nomestazione']}, tipo={s['nometiposensore']}")
+      f"name={s['nomestazione']}, type={s['nometiposensore']}")
 
 # 2. Cross-reference with main registry
 p("\n=== Main Station Registry: PM10 Sensors ===")
@@ -35,7 +35,7 @@ main_pm10_sensors = r2.json()
 p(f"Found {len(main_pm10_sensors)} PM10 sensors in main registry")
 for s in main_pm10_sensors[:5]:
     p(f"  idsensore={s['idsensore']}, idstazione={s['idstazione']}, "
-      f"nome={s['nomestazione']}, tipo={s['nometiposensore']}")
+      f"name={s['nomestazione']}, type={s['nometiposensore']}")
 
 # 3. Check overlap
 nrt_ids = {s["idsensore"] for s in nrt_pm10_sensors}

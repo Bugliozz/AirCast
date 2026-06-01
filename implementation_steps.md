@@ -525,16 +525,16 @@ Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia s
 
 ### 8.4 `compose.yaml` (solo dev locale, NON per deploy)
 
-- [ ] Tieni `step_2_ingestion/compose.yaml` esistente per MySQL locale + pipeline training
-- [ ] Aggiungi commento in `README.md`: "compose.yaml serve solo per training pipeline locale; il deploy produzione è su Cloud Run"
+- [x] Tieni `step_2_ingestion/compose.yaml` esistente per MySQL locale + pipeline training
+- [x] Aggiungi commento in `README.md`: "compose.yaml serve solo per training pipeline locale; il deploy produzione è su Cloud Run"
 
 ### 8.5 Verifica deploy
 
-- [ ] `https://<service-url>/health` → `{"status":"ok"}`
-- [ ] `https://<service-url>/` → mappa Lombardia caricata
-- [ ] `https://<service-url>/forecast?station_id=<id>&days=1` → JSON previsione
-- [ ] `https://<service-url>/docs` → Swagger UI
-- [ ] Log Cloud Run: nessun errore di connessione MySQL, fetch GCS OK
+- [x] `https://<service-url>/health` → `{"status":"ok"}`
+- [x] `https://<service-url>/` → mappa Lombardia caricata
+- [x] `https://<service-url>/forecast?station_id=<id>&days=1` → JSON previsione
+- [x] `https://<service-url>/docs` → Swagger UI
+- [x] Log Cloud Run: nessun errore di connessione MySQL, fetch GCS OK
 
 ---
 

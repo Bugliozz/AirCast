@@ -120,9 +120,9 @@ def run_selection(metrics: dict) -> dict:
             "production_ready": True,
             "selected_strategy": _extract_key_metrics(winner),
             "selection_reason": (
-                f"Unica strategia (o la migliore per f1_macro a parità di ±{TIE_F1_THRESHOLD}) "
-                f"che rispetta severe_error_rate ≤ {SEVERE_ERROR_RATE_MAX*100:.1f}% "
-                f"e recall_rosso ≥ {RECALL_ROSSO_MIN}."
+                f"Only strategy, or best by f1_macro within +/-{TIE_F1_THRESHOLD}, "
+                f"that satisfies severe_error_rate <= {SEVERE_ERROR_RATE_MAX*100:.1f}% "
+                f"and recall_rosso >= {RECALL_ROSSO_MIN}."
             ),
             "best_research_candidate": None,
         }
@@ -134,11 +134,11 @@ def run_selection(metrics: dict) -> dict:
         failed_constraints = []
         if not any(_passes_c1(m) for m in all_strategies):
             failed_constraints.append(
-                f"severe_error_rate: nessun modello sotto {SEVERE_ERROR_RATE_MAX*100:.1f}%"
+                f"severe_error_rate: no model below {SEVERE_ERROR_RATE_MAX*100:.1f}%"
             )
         if not any(_passes_c2(m) for m in all_strategies):
             failed_constraints.append(
-                f"recall_rosso: nessun modello sopra {RECALL_ROSSO_MIN}"
+                f"recall_rosso: no model above {RECALL_ROSSO_MIN}"
             )
         if not failed_constraints:
             # Some pass C1, some pass C2, but none pass both
@@ -146,25 +146,25 @@ def run_selection(metrics: dict) -> dict:
                 (m.get("recall_rosso") or 0.0 for m in c1_passing), default=0.0
             )
             failed_constraints.append(
-                f"recall_rosso: il miglior valore tra le strategie che passano C1 "
-                f"è {best_c1_recall:.4f} < {RECALL_ROSSO_MIN} — "
-                f"nessuna strategia supera contemporaneamente entrambi i vincoli"
+                f"recall_rosso: the best value among strategies passing C1 is "
+                f"{best_c1_recall:.4f} < {RECALL_ROSSO_MIN}; "
+                f"no strategy satisfies both constraints at the same time"
             )
 
         result = {
             "production_ready": False,
             "selected_strategy": None,
             "selection_reason": (
-                "Nessuna strategia rispetta entrambi i vincoli hard di §8. "
-                "Il sistema non è promosso a production-ready. "
-                "api/services/predictor.py non viene aggiornato automaticamente."
+                "No strategy satisfies both Section 8 hard constraints. "
+                "The system is not promoted to production-ready. "
+                "api/services/predictor.py is not updated automatically."
             ),
             "failed_constraints": failed_constraints,
             "best_research_candidate": _extract_key_metrics(best_research),
             "best_research_candidate_note": (
-                "Miglior candidato sperimentale tra le strategie con "
-                f"severe_error_rate ≤ {SEVERE_ERROR_RATE_MAX*100:.1f}%. "
-                "Non è production-ready: viola il vincolo recall_rosso."
+                "Best experimental candidate among strategies with "
+                f"severe_error_rate <= {SEVERE_ERROR_RATE_MAX*100:.1f}%. "
+                "Not production-ready: it violates the recall_rosso constraint."
             ),
         }
 
@@ -172,8 +172,8 @@ def run_selection(metrics: dict) -> dict:
         "c1_severe_error_rate_max": SEVERE_ERROR_RATE_MAX,
         "c2_recall_rosso_min": RECALL_ROSSO_MIN,
         "tie_f1_threshold": TIE_F1_THRESHOLD,
-        "c1_description": f"severe_error_rate ≤ {SEVERE_ERROR_RATE_MAX*100:.1f}%",
-        "c2_description": f"recall_rosso ≥ {RECALL_ROSSO_MIN}",
+        "c1_description": f"severe_error_rate <= {SEVERE_ERROR_RATE_MAX*100:.1f}%",
+        "c2_description": f"recall_rosso >= {RECALL_ROSSO_MIN}",
     }
     result["constraint_summary_per_strategy"] = constraint_summary
     result["n_strategies_evaluated"] = len(all_strategies)

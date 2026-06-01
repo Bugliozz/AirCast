@@ -9,11 +9,11 @@ Task 3.5.1 — Metriche su test holdout:
 - RMSE separato per fascia di allerta: verde / giallo / arancio / rosso
 - Tabella riassuntiva di tutti i modelli
 
-Task 3.5.2 — Plot diagnostici:
-- Scatter y_pred vs y_true (con linea identità)
-- Residui vs y_pred (omoschedasticità)
-- Residui vs tempo (assenza di trend)
-- Distribuzione dei residui (normale, centrata su 0)
+Task 3.5.2 — Diagnostic plots:
+- Scatter y_pred vs y_true (with identity line)
+- Residuals vs y_pred (homoscedasticity)
+- Residuals vs time (no trend)
+- Residual distribution (normal, centred on 0)
 
 Tasks 3.5.3–3.5.4 (feature importance, salvataggio artifacts)
 are implemented in the corresponding sub-tasks.
@@ -328,13 +328,13 @@ def plot_diagnostics(
     """Generate 4 diagnostic plots for a regression model and save to PNG.
 
     Plots (2×2 grid):
-    1. **Predetto vs Reale** — scatter y_pred vs y_true with identity line.
+    1. **Predicted vs Actual** — scatter y_pred vs y_true with identity line.
        Ideal: points on the ``y = x`` diagonal.
-    2. **Residui vs Predetto** — residuals ``y_true − y_pred`` against y_pred.
-       Ideal: random band around zero (omoschedasticità).
-    3. **Residui nel Tempo** — residuals against ``data_giorno``.
+    2. **Residuals vs Predicted** — residuals ``y_true − y_pred`` against y_pred.
+       Ideal: random band around zero (homoscedasticity).
+    3. **Residuals Over Time** — residuals against ``data_giorno``.
        Ideal: no systematic trend or seasonality.
-    4. **Distribuzione dei Residui** — histogram + fitted normal PDF.
+    4. **Residual Distribution** — histogram + fitted normal PDF.
        Ideal: roughly Gaussian, centred at zero.
 
     Args:
@@ -352,7 +352,7 @@ def plot_diagnostics(
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     fig.suptitle(
-        f"Plot Diagnostici — {model_name}",
+        f"Diagnostic Plots - {model_name}",
         fontsize=14,
         fontweight="bold",
     )
@@ -364,13 +364,13 @@ def plot_diagnostics(
     all_vals = np.concatenate([y_true.values, y_pred])
     lim_low = float(all_vals.min()) - 5.0
     lim_high = float(all_vals.max()) + 5.0
-    ax.scatter(y_true, y_pred, alpha=0.3, s=10, color="steelblue", label="predizioni")
-    ax.plot([lim_low, lim_high], [lim_low, lim_high], "r--", linewidth=1.5, label="identità (y=x)")
+    ax.scatter(y_true, y_pred, alpha=0.3, s=10, color="steelblue", label="predictions")
+    ax.plot([lim_low, lim_high], [lim_low, lim_high], "r--", linewidth=1.5, label="identity (y=x)")
     ax.set_xlim(lim_low, lim_high)
     ax.set_ylim(lim_low, lim_high)
     ax.set_xlabel("y_true (PM10 µg/m³)")
     ax.set_ylabel("y_pred (PM10 µg/m³)")
-    ax.set_title("Predetto vs Reale")
+    ax.set_title("Predicted vs Actual")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
@@ -381,8 +381,8 @@ def plot_diagnostics(
     ax.scatter(y_pred, residuals, alpha=0.3, s=10, color="darkorange")
     ax.axhline(0.0, color="red", linewidth=1.5, linestyle="--")
     ax.set_xlabel("y_pred (PM10 µg/m³)")
-    ax.set_ylabel("Residuo (y_true − y_pred)")
-    ax.set_title("Residui vs Predetto (omoschedasticità)")
+    ax.set_ylabel("Residual (y_true - y_pred)")
+    ax.set_title("Residuals vs Predicted (homoscedasticity)")
     ax.grid(True, alpha=0.3)
 
     # ------------------------------------------------------------------
@@ -394,9 +394,9 @@ def plot_diagnostics(
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     ax.xaxis.set_major_locator(mdates.MonthLocator())
     plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
-    ax.set_xlabel("Data")
-    ax.set_ylabel("Residuo (y_true − y_pred)")
-    ax.set_title("Residui nel Tempo (assenza di trend)")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Residual (y_true - y_pred)")
+    ax.set_title("Residuals Over Time (no trend)")
     ax.grid(True, alpha=0.3)
 
     # ------------------------------------------------------------------
@@ -410,7 +410,7 @@ def plot_diagnostics(
         alpha=0.65,
         color="steelblue",
         edgecolor="white",
-        label="distribuzione empirica",
+        label="empirical distribution",
     )
     mu = float(np.mean(residuals))
     sigma = float(np.std(residuals))
@@ -427,9 +427,9 @@ def plot_diagnostics(
         label=f"N(µ={mu:.1f}, σ={sigma:.1f})",
     )
     ax.axvline(0.0, color="black", linewidth=1.0, linestyle=":", label="zero")
-    ax.set_xlabel("Residuo (y_true − y_pred)")
-    ax.set_ylabel("Densità")
-    ax.set_title("Distribuzione dei Residui")
+    ax.set_xlabel("Residual (y_true - y_pred)")
+    ax.set_ylabel("Density")
+    ax.set_title("Residual Distribution")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
@@ -554,7 +554,7 @@ def plot_permutation_importance(
     )
     ax.set_yticks(y_pos)
     ax.set_yticklabels(top_names[::-1], fontsize=9)
-    ax.set_xlabel("Aumento medio RMSE quando la feature è permutata (µg/m³)")
+    ax.set_xlabel("Mean RMSE increase when the feature is permuted (µg/m³)")
     ax.set_title(
         f"Permutation Importance — {model_name}  (top {top_n}, test set)",
         fontweight="bold",
@@ -614,11 +614,11 @@ def plot_native_feature_importance(
     if hasattr(regressor, "feature_importances_"):
         # XGBoost, RandomForest — native tree importances (gain-based)
         importances = np.array(regressor.feature_importances_)
-        importance_label = "Importanza nativa (gain)"
+        importance_label = "Native importance (gain)"
     elif hasattr(regressor, "regressor_") and hasattr(regressor.regressor_, "coef_"):
         # TransformedTargetRegressor wrapping ElasticNet
         importances = np.abs(regressor.regressor_.coef_)
-        importance_label = "|coef| (scala standardizzata)"
+        importance_label = "|coef| (standardized scale)"
     else:
         logger.warning(
             "plot_native_feature_importance: no .feature_importances_ or .coef_ "
@@ -647,7 +647,7 @@ def plot_native_feature_importance(
     ax.set_yticklabels(top_names[::-1], fontsize=9)
     ax.set_xlabel(importance_label)
     ax.set_title(
-        f"Feature Importance Nativa — {model_name}  (top {top_n})",
+        f"Native Feature Importance - {model_name}  (top {top_n})",
         fontweight="bold",
     )
     ax.grid(True, axis="x", alpha=0.3)

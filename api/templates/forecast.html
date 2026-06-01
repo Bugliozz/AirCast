@@ -1,22 +1,30 @@
 {% extends "base.html" %}
 {% set active_page = 'forecast' %}
-{% block title %}Previsione PM10 - PM10 Forecast Lombardia{% endblock %}
+{% block title %}PM10 Forecast - PM10 Forecast Lombardy{% endblock %}
 
 {% block content %}
-  <h1 class="h3 mb-3">Previsione PM10 per stazione</h1>
+  {% set alert_labels = {
+    'verde': 'green',
+    'giallo': 'yellow',
+    'arancione': 'orange',
+    'arancio': 'orange',
+    'rosso': 'red'
+  } %}
+
+  <h1 class="h3 mb-3">PM10 forecast by station</h1>
 
   <form method="post" action="/forecast-ui" class="card shadow-sm p-4 mb-4">
     <div class="row g-3 align-items-end">
       <div class="col-md-6">
-        <label for="station_id" class="form-label">Stazione</label>
+        <label for="station_id" class="form-label">Station</label>
         <select id="station_id" name="station_id" class="form-select" required>
           {% for s in stations %}
             {% set dq = s.data_quality %}
             {% set dot = '&#128994;' if dq == 'ok' else ('&#128993;' if dq == 'partial' else '&#128308;') %}
-            {% set quality_tip = 'Dati recenti completi (' ~ s.valid_days_last_7 ~ '/7 giorni validi)' if dq == 'ok'
-                         else ('Dati recenti parziali (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione meno affidabile' if dq == 'partial'
-                               else 'Dati recenti insufficienti (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione non disponibile') %}
-            {% set nrt_tip = ' - dato PM10 di oggi disponibile (NRT)' if s.nrt_available else '' %}
+            {% set quality_tip = 'Complete recent data (' ~ s.valid_days_last_7 ~ '/7 valid days)' if dq == 'ok'
+                         else ('Partial recent data (' ~ s.valid_days_last_7 ~ '/7 valid days) - less reliable forecast' if dq == 'partial'
+                               else 'Insufficient recent data (' ~ s.valid_days_last_7 ~ '/7 valid days) - forecast unavailable') %}
+            {% set nrt_tip = ' - today PM10 value available (NRT)' if s.nrt_available else '' %}
             <option value="{{ s.idstazione }}"
               title="{{ quality_tip }}{{ nrt_tip }}"
               {% if selected_station == s.idstazione %}selected{% endif %}>
@@ -26,18 +34,18 @@
         </select>
       </div>
       <div class="col-md-4">
-        <label class="form-label d-block">Orizzonte</label>
-        <div class="btn-group" role="group" aria-label="Orizzonte">
+        <label class="form-label d-block">Horizon</label>
+        <div class="btn-group" role="group" aria-label="Horizon">
           <input type="radio" class="btn-check" name="days" id="days1" value="1"
                  {% if selected_days != 2 %}checked{% endif %}>
-          <label class="btn btn-outline-primary" for="days1">+1 giorno</label>
+          <label class="btn btn-outline-primary" for="days1">+1 day</label>
           <input type="radio" class="btn-check" name="days" id="days2" value="2"
                  {% if selected_days == 2 %}checked{% endif %}>
-          <label class="btn btn-outline-primary" for="days2">+2 giorni</label>
+          <label class="btn btn-outline-primary" for="days2">+2 days</label>
         </div>
       </div>
       <div class="col-md-2">
-        <button type="submit" class="btn btn-primary w-100">Prevedi</button>
+        <button type="submit" class="btn btn-primary w-100">Forecast</button>
       </div>
     </div>
   </form>
@@ -51,33 +59,33 @@
       <h2 class="h5 mb-1">
         {{ result.station_name }}
         {% if result.nrt_available %}
-          <span class="badge bg-success ms-2" title="Il lag-1 della previsione usa il dato PM10 di oggi dal feed ARPA NRT">
+          <span class="badge bg-success ms-2" title="The forecast lag-1 uses today's PM10 value from the ARPA NRT feed">
             &#9679; LIVE
           </span>
         {% endif %}
         {% if cluster_info %}
           <a href="/clusters"
              class="badge bg-{{ cluster_info.badge_class }} bg-opacity-75 ms-2 text-decoration-none"
-             title="PM10 medio: {{ cluster_info.pm10_mean }} µg/m³ — Giorni critici: {{ cluster_info.pct_critical_days }}%">
+             title="Mean PM10: {{ cluster_info.pm10_mean }} &mu;g/m&sup3; - Critical days: {{ cluster_info.pct_critical_days }}%">
             Cluster {{ cluster_info.cluster }} &mdash; {{ cluster_info.label }}
           </a>
         {% endif %}
       </h2>
-      <p class="disclaimer mb-0">Stazione ID {{ result.station_id }}</p>
+      <p class="disclaimer mb-0">Station ID {{ result.station_id }}</p>
     </div>
 
     {% if result.data_quality == 'partial' %}
       <div class="alert alert-warning">
-        Dati recenti parziali ({{ result.valid_days_last_7 }}/7 giorni validi):
-        l'affidabilita della previsione e ridotta.
+        Partial recent data ({{ result.valid_days_last_7 }}/7 valid days):
+        forecast reliability is reduced.
       </div>
     {% endif %}
 
     <div class="alert {% if result.nrt_available %}alert-success{% else %}alert-secondary{% endif %} py-2 small">
       {% if result.nrt_available %}
-        Lag-1 basato sul dato PM10 di oggi (ARPA NRT).
+        Lag-1 based on today's PM10 value (ARPA NRT).
       {% else %}
-        Lag-1 basato sul dato PM10 di ieri (questa stazione non e nel feed NRT).
+        Lag-1 based on yesterday's PM10 value (this station is not in the NRT feed).
       {% endif %}
     </div>
 
@@ -87,7 +95,7 @@
           <div class="d-flex justify-content-between align-items-start flex-wrap">
             <div>
               <div class="text-muted small text-uppercase">
-                {{ p.date }}{% if loop.index == 2 %} - giorno+2{% endif %}
+                {{ p.date }}{% if loop.index == 2 %} - day+2{% endif %}
               </div>
               <div class="forecast-value">
                 <span>{{ "%.1f"|format(p.pm10_predicted) }}</span>
@@ -96,7 +104,7 @@
             </div>
             <div>
               <span class="alert-badge alert-{{ p.alert_class }}">
-                {{ p.alert_class|upper }}
+                {{ alert_labels.get(p.alert_class, p.alert_class)|upper }}
               </span>
             </div>
           </div>
@@ -104,8 +112,8 @@
           <table class="table table-sm mt-3 mb-0">
             <thead>
               <tr>
-                <th>Temperatura media</th>
-                <th>Vento medio</th>
+                <th>Average temperature</th>
+                <th>Average wind</th>
                 <th>Boundary Layer Height</th>
               </tr>
             </thead>
@@ -132,8 +140,8 @@
 
           {% if loop.index == 2 %}
             <p class="disclaimer mt-3 mb-0">
-              Previsione a 48h: il lag PM10 usato e la predizione di giorno+1,
-              quindi l'incertezza cresce rispetto a giorno+1.
+              48h forecast: the PM10 lag uses tomorrow's prediction, so
+              uncertainty is higher than for tomorrow.
             </p>
           {% endif %}
         </div>

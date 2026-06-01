@@ -21,13 +21,35 @@ main.container { padding-top: 24px; padding-bottom: 48px; }
 
 .card { border: 1px solid var(--color-border); }
 
-.alert-badge {
-  display: inline-block;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-weight: 600;
-  color: #fff;
+.map-header {
+  display: grid;
+  justify-items: center;
+  text-align: center;
 }
+
+.alert-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.alert-legend-item,
+.alert-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.6rem;
+  min-height: 2rem;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: #fff;
+  box-shadow: 0 1px 2px rgb(31 45 61 / 18%);
+}
+.alert-legend-item { cursor: help; }
 .alert-verde    { background: #2ecc71; }
 .alert-giallo   { background: #f1c40f; color: #1f2d3d; }
 .alert-arancione,

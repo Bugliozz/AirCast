@@ -44,6 +44,7 @@ from step_5_classification.guardrails import (
 logger = logging.getLogger(__name__)
 
 CLASS_NAMES: List[str] = ["verde", "giallo", "arancio", "rosso"]
+CLASS_DISPLAY_NAMES: List[str] = ["Green", "Yellow", "Orange", "Red"]
 CLASSIFIER_CANDIDATES: Tuple[str, ...] = (
     "xgboost",
     "random_forest",
@@ -425,7 +426,9 @@ def plot_reliability_diagrams(
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     axes_flat = axes.ravel()
 
-    for idx, (cls_name, ax) in enumerate(zip(CLASS_NAMES, axes_flat)):
+    for idx, (_cls_name, display_name, ax) in enumerate(
+        zip(CLASS_NAMES, CLASS_DISPLAY_NAMES, axes_flat)
+    ):
         y_binary = (y_test.values == idx).astype(int)
 
         # Uncalibrated curve
@@ -437,7 +440,7 @@ def plot_reliability_diagrams(
             frac_pos_uncal,
             marker="s",
             linewidth=1.5,
-            label="Prima (non calibrato)",
+            label="Before (uncalibrated)",
             color="steelblue",
         )
 
@@ -450,23 +453,23 @@ def plot_reliability_diagrams(
             frac_pos_cal,
             marker="o",
             linewidth=1.5,
-            label="Dopo (calibrato)",
+            label="After (calibrated)",
             color="darkorange",
         )
 
         # Perfect calibration diagonal
-        ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfetta")
+        ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfect")
 
-        ax.set_xlabel("Probabilita' media predetta")
-        ax.set_ylabel("Frazione positivi osservata")
-        ax.set_title(f"Classe: {cls_name}", fontweight="bold")
+        ax.set_xlabel("Mean predicted probability")
+        ax.set_ylabel("Observed positive fraction")
+        ax.set_title(f"Class: {display_name}", fontweight="bold")
         ax.legend(loc="lower right", fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.set_xlim(-0.02, 1.02)
         ax.set_ylim(-0.02, 1.02)
 
     fig.suptitle(
-        "Reliability Diagram — Prima vs Dopo Calibrazione (one-vs-rest)",
+        "Reliability Diagram - Before vs After Calibration (one-vs-rest)",
         fontsize=14,
         fontweight="bold",
         y=1.01,

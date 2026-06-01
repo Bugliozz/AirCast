@@ -158,7 +158,7 @@ def circularity_caveat(df: pd.DataFrame) -> dict[str, Any]:
     result: dict[str, Any] = {
         "non_independent": True,
         "note": (
-            "classe_allerta is derived from PM10 thresholds — the same signal "
+            "The alert class is derived from PM10 thresholds — the same signal "
             "that drives pm10_mean in the feature set.  This metric is reported "
             "for completeness only and must NOT be used as evidence of validity."
         ),

@@ -25,11 +25,11 @@ class _DummyRegressionModel:
         return np.array([42.0])
 
 
-class _DummyClassificationModel:
-    """Minimal classifier stub for predictor.predict()."""
+class _DummyCalibratedClassifier:
+    """Minimal calibrated classifier stub for predictor.predict()."""
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
-        return np.array([0])
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        return np.array([[0.05, 0.10, 0.80, 0.05]])
 
 
 def _make_lag_data() -> pd.DataFrame:
@@ -116,7 +116,7 @@ def test_predict_handles_trailing_nan_pm10_without_raising(monkeypatch) -> None:
     regression_model = _DummyRegressionModel()
 
     monkeypatch.setattr(predictor, "_regression_model", regression_model)
-    monkeypatch.setattr(predictor, "_classification_model", _DummyClassificationModel())
+    monkeypatch.setattr(predictor, "_calibrated_classifier", _DummyCalibratedClassifier())
     monkeypatch.setattr(predictor, "_feature_store", pd.DataFrame({"idstazione": ["S1"]}))
     monkeypatch.setattr(
         predictor,

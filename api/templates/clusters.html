@@ -1,20 +1,20 @@
 {% extends "base.html" %}
 {% set active_page = 'clusters' %}
-{% block title %}Analisi Cluster Stazioni - PM10 Forecast Lombardia{% endblock %}
+{% block title %}Station Cluster Analysis - PM10 Forecast Lombardy{% endblock %}
 
 {% block content %}
   <div class="d-flex align-items-baseline gap-3 mb-1">
-    <h1 class="h3 mb-0">Analisi Cluster Stazioni</h1>
+    <h1 class="h3 mb-0">Station Cluster Analysis</h1>
   </div>
   <p class="text-muted small mb-4">
-    Clustering non supervisionato (KMeans k=2) su 67 stazioni Lombardia &mdash;
-    8 feature: PM10 medio, giorni critici, stagionalit&agrave;, stagnazione, distanza industriale,
-    NO<sub>2</sub>, quota, vento.
+    Unsupervised clustering (KMeans k=2) across 67 Lombardy stations &mdash;
+    8 features: mean PM10, critical days, seasonality, stagnation, industrial distance,
+    NO<sub>2</sub>, elevation, wind.
     Silhouette = 0.467 &bull; Kruskal-Wallis PM10: p = 8.4&times;10<sup>&minus;7</sup>.
   </p>
 
   {% if not cluster_data %}
-    <div class="alert alert-warning">Dati di clustering non disponibili.</div>
+    <div class="alert alert-warning">Clustering data is not available.</div>
   {% else %}
 
   {# --- Cluster cards --- #}
@@ -30,36 +30,36 @@
           <div class="row text-center g-2 mb-3">
             <div class="col-4">
               <div class="fs-4 fw-bold">{{ c.n_stations }}</div>
-              <div class="text-muted small">stazioni</div>
+              <div class="text-muted small">stations</div>
             </div>
             <div class="col-4">
               <div class="fs-4 fw-bold">{{ c.pm10_mean }}</div>
-              <div class="text-muted small">PM10 medio &mu;g/m&sup3;</div>
+              <div class="text-muted small">mean PM10 &mu;g/m&sup3;</div>
             </div>
             <div class="col-4">
               <div class="fs-4 fw-bold">{{ c.pct_critical_days }}%</div>
-              <div class="text-muted small">giorni critici</div>
+              <div class="text-muted small">critical days</div>
             </div>
           </div>
 
           <table class="table table-sm mb-3">
             <tbody>
               <tr>
-                <td class="text-muted">Quota media</td>
+                <td class="text-muted">Mean elevation</td>
                 <td class="text-end">{{ c.quota_mean|int }} m</td>
               </tr>
               <tr>
-                <td class="text-muted">Vento medio</td>
+                <td class="text-muted">Mean wind</td>
                 <td class="text-end">{{ c.wind_speed_mean }} m/s</td>
               </tr>
               <tr>
-                <td class="text-muted">NO<sub>2</sub> medio</td>
-                <td class="text-muted small">(traffico/combustione)</td>
+                <td class="text-muted">Mean NO<sub>2</sub></td>
+                <td class="text-muted small">(traffic/combustion)</td>
                 <td class="text-end">{{ c.no2_mean }} &mu;g/m&sup3;</td>
               </tr>
               <tr>
-                <td class="text-muted">Stagionalit&agrave;</td>
-                <td class="text-muted small">(inverno/estate)</td>
+                <td class="text-muted">Seasonality</td>
+                <td class="text-muted small">(winter/summer)</td>
                 <td class="text-end">&times;{{ c.seasonality_ratio }}</td>
               </tr>
             </tbody>
@@ -67,7 +67,7 @@
 
           <details>
             <summary class="small text-muted" style="cursor:pointer;">
-              Stazioni ({{ c.n_stations }})
+              Stations ({{ c.n_stations }})
             </summary>
             <div class="mt-2" style="max-height:200px; overflow-y:auto;">
               <ul class="list-unstyled mb-0">
@@ -90,7 +90,7 @@
 
   {# --- Feature comparison table --- #}
   <div class="card shadow-sm mb-4">
-    <div class="card-header fw-semibold">Confronto feature medie per cluster</div>
+    <div class="card-header fw-semibold">Mean feature comparison by cluster</div>
     <div class="card-body p-0">
       <div class="table-responsive">
         <table class="table table-sm table-striped mb-0 align-middle">
@@ -107,27 +107,27 @@
           </thead>
           <tbody>
             <tr>
-              <td>PM10 medio (&mu;g/m&sup3;)</td>
+              <td>Mean PM10 (&mu;g/m&sup3;)</td>
               {% for c in cluster_data %}<td class="text-center fw-semibold">{{ c.pm10_mean }}</td>{% endfor %}
             </tr>
             <tr>
-              <td>Giorni critici (arancio+rosso)</td>
+              <td>Critical days (orange+red)</td>
               {% for c in cluster_data %}<td class="text-center">{{ c.pct_critical_days }}%</td>{% endfor %}
             </tr>
             <tr>
-              <td>Quota media (m)</td>
+              <td>Mean elevation (m)</td>
               {% for c in cluster_data %}<td class="text-center">{{ c.quota_mean|int }}</td>{% endfor %}
             </tr>
             <tr>
-              <td>Vento medio (m/s)</td>
+              <td>Mean wind (m/s)</td>
               {% for c in cluster_data %}<td class="text-center">{{ c.wind_speed_mean }}</td>{% endfor %}
             </tr>
             <tr>
-              <td>NO<sub>2</sub> medio (&mu;g/m&sup3;)</td>
+              <td>Mean NO<sub>2</sub> (&mu;g/m&sup3;)</td>
               {% for c in cluster_data %}<td class="text-center">{{ c.no2_mean }}</td>{% endfor %}
             </tr>
             <tr>
-              <td>Stagionalit&agrave; (inverno/estate)</td>
+              <td>Seasonality (winter/summer)</td>
               {% for c in cluster_data %}<td class="text-center">&times;{{ c.seasonality_ratio }}</td>{% endfor %}
             </tr>
           </tbody>
@@ -138,11 +138,11 @@
 
   {# --- Methodology note --- #}
   <div class="alert alert-secondary small">
-    <strong>Nota metodologica</strong> &mdash;
-    I cluster sono stati costruiti su profili stazione aggregati (media su tutti i giorni disponibili 2024-2026).
-    La validazione esterna vs provincia (ARI=0.038) conferma che i cluster catturano
-    <em>profili di inquinamento</em>, non confini amministrativi.
-    La separazione tra cluster risulta altamente significativa (Kruskal-Wallis p&lt;0.001).
+    <strong>Methodology note</strong> &mdash;
+    Clusters were built from aggregated station profiles (mean values across all available days in 2024-2026).
+    External validation against province (ARI=0.038) confirms that clusters capture
+    <em>pollution profiles</em>, not administrative boundaries.
+    The separation between clusters is highly significant (Kruskal-Wallis p&lt;0.001).
   </div>
 
   {% endif %}

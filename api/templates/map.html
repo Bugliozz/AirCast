@@ -1,20 +1,35 @@
 {% extends "base.html" %}
 {% set active_page = 'map' %}
-{% block title %}Mappa allerte - PM10 Forecast Lombardia{% endblock %}
+{% block title %}Alert Map - PM10 Forecast Lombardy{% endblock %}
 
 {% block content %}
-  <div class="d-flex justify-content-between align-items-end mb-3">
-    <div>
-      <h1 class="h3 mb-1">Mappa allerte PM10 - giorno+1</h1>
-      <p class="disclaimer mb-0">
-        Marker colorati per classe di allerta prevista. Dati aggiornati ogni 15 minuti.
-      </p>
-    </div>
-    <div>
-      <span class="alert-badge alert-verde">verde</span>
-      <span class="alert-badge alert-giallo">giallo</span>
-      <span class="alert-badge alert-arancione">arancione</span>
-      <span class="alert-badge alert-rosso">rosso</span>
+  <div class="map-header mb-3">
+    <h1 class="h3 mb-0">PM10 alert map - tomorrow</h1>
+    <div class="alert-legend mt-2" aria-label="PM10 alert legend">
+      <span
+        class="alert-legend-item alert-verde"
+        tabindex="0"
+        data-bs-toggle="tooltip"
+        title="Green: PM10 forecast below 20 ug/m3"
+      >green</span>
+      <span
+        class="alert-legend-item alert-giallo"
+        tabindex="0"
+        data-bs-toggle="tooltip"
+        title="Yellow: PM10 forecast from 20 to 35 ug/m3"
+      >yellow</span>
+      <span
+        class="alert-legend-item alert-arancione"
+        tabindex="0"
+        data-bs-toggle="tooltip"
+        title="Orange: PM10 forecast from 35 to 50 ug/m3"
+      >orange</span>
+      <span
+        class="alert-legend-item alert-rosso"
+        tabindex="0"
+        data-bs-toggle="tooltip"
+        title="Red: PM10 forecast at or above 50 ug/m3"
+      >red</span>
     </div>
   </div>
 
@@ -23,8 +38,16 @@
       <iframe
         srcdoc="{{ map_html|e }}"
         style="width: 100%; height: 100%; border: 0;"
-        title="Mappa allerte PM10 Lombardia"
+        title="PM10 alert map for Lombardy"
       ></iframe>
     </div>
   </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+      new bootstrap.Tooltip(el);
+    });
+  </script>
 {% endblock %}

@@ -40,8 +40,8 @@ def _cluster_label(profile: dict[str, Any], all_profiles: list[dict[str, Any]]) 
     """Return (human label, Bootstrap badge class) for a cluster profile."""
     max_pm10 = max(p["pm10_mean"] for p in all_profiles)
     if profile["pm10_mean"] == max_pm10:
-        return "Alta criticità PM10", "danger"
-    return "Bassa criticità PM10", "success"
+        return "High PM10 criticality", "danger"
+    return "Low PM10 criticality", "success"
 
 
 def get_station_cluster_info(station_id: str) -> Optional[dict[str, Any]]:

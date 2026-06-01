@@ -1,25 +1,33 @@
 {% extends "base.html" %}
 {% set active_page = 'history' %}
-{% block title %}Storico PM10 - PM10 Forecast Lombardia{% endblock %}
+{% block title %}PM10 History - PM10 Forecast Lombardy{% endblock %}
 
 {% block head_extra %}
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 {% endblock %}
 
 {% block content %}
-  <h1 class="h3 mb-3">Serie storica PM10</h1>
+  {% set alert_labels = {
+    'verde': 'green',
+    'giallo': 'yellow',
+    'arancione': 'orange',
+    'arancio': 'orange',
+    'rosso': 'red'
+  } %}
+
+  <h1 class="h3 mb-3">PM10 historical series</h1>
 
   <form method="post" action="/history-ui" class="card shadow-sm p-4 mb-4">
     <div class="row g-3 align-items-end">
       <div class="col-md-5">
-        <label for="station_id" class="form-label">Stazione</label>
+        <label for="station_id" class="form-label">Station</label>
         <select id="station_id" name="station_id" class="form-select" required>
           {% for s in stations %}
             {% set dq = s.data_quality %}
             {% set dot = '&#128994;' if dq == 'ok' else ('&#128993;' if dq == 'partial' else '&#128308;') %}
-            {% set tip = 'Dati recenti completi (' ~ s.valid_days_last_7 ~ '/7 giorni validi)' if dq == 'ok'
-                         else ('Dati recenti parziali (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione meno affidabile' if dq == 'partial'
-                               else 'Dati recenti insufficienti (' ~ s.valid_days_last_7 ~ '/7 giorni validi) - previsione non disponibile') %}
+            {% set tip = 'Complete recent data (' ~ s.valid_days_last_7 ~ '/7 valid days)' if dq == 'ok'
+                         else ('Partial recent data (' ~ s.valid_days_last_7 ~ '/7 valid days) - less reliable forecast' if dq == 'partial'
+                               else 'Insufficient recent data (' ~ s.valid_days_last_7 ~ '/7 valid days) - forecast unavailable') %}
             <option value="{{ s.idstazione }}"
               title="{{ tip }}"
               {% if selected_station == s.idstazione %}selected{% endif %}>
@@ -29,17 +37,17 @@
         </select>
       </div>
       <div class="col-md-3">
-        <label for="from_date" class="form-label">Da</label>
+        <label for="from_date" class="form-label">From</label>
         <input type="date" id="from_date" name="from_date" class="form-control"
                value="{{ from_date }}" required>
       </div>
       <div class="col-md-3">
-        <label for="to_date" class="form-label">A</label>
+        <label for="to_date" class="form-label">To</label>
         <input type="date" id="to_date" name="to_date" class="form-control"
                value="{{ to_date }}" required>
       </div>
       <div class="col-md-1">
-        <button type="submit" class="btn btn-primary w-100">Vai</button>
+        <button type="submit" class="btn btn-primary w-100">View</button>
       </div>
     </div>
   </form>
@@ -52,12 +60,12 @@
     <div class="mb-3">
       <a href="/clusters"
          class="badge bg-{{ cluster_info.badge_class }} bg-opacity-75 text-decoration-none"
-         title="PM10 medio: {{ cluster_info.pm10_mean }} µg/m³ — Giorni critici: {{ cluster_info.pct_critical_days }}%">
+         title="Mean PM10: {{ cluster_info.pm10_mean }} &mu;g/m&sup3; - Critical days: {{ cluster_info.pct_critical_days }}%">
         Cluster {{ cluster_info.cluster }} &mdash; {{ cluster_info.label }}
       </a>
       <span class="text-muted small ms-2">
-        PM10 medio cluster: {{ cluster_info.pm10_mean }} &mu;g/m&sup3; &bull;
-        Giorni critici: {{ cluster_info.pct_critical_days }}%
+        Cluster mean PM10: {{ cluster_info.pm10_mean }} &mu;g/m&sup3; &bull;
+        Critical days: {{ cluster_info.pct_critical_days }}%
       </span>
     </div>
   {% endif %}
@@ -91,7 +99,7 @@
 
         const layout = {
           title: payload.title,
-          xaxis: { title: 'Data', type: 'date' },
+          xaxis: { title: 'Date', type: 'date' },
           yaxis: { title: 'PM10 (&mu;g/m&sup3;)', rangemode: 'tozero' },
           margin: { l: 60, r: 20, t: 50, b: 50 },
           shapes: bands.map(b => ({
@@ -115,14 +123,14 @@
   {% if records %}
     <div class="card shadow-sm">
       <div class="card-body">
-        <h2 class="h5 mb-3">Dettaglio giornaliero</h2>
+        <h2 class="h5 mb-3">Daily detail</h2>
         <div class="table-responsive">
           <table class="table table-sm align-middle history-table mb-0">
             <thead>
               <tr>
-                <th>Data</th>
+                <th>Date</th>
                 <th>PM10</th>
-                <th>Allerta</th>
+                <th>Alert</th>
               </tr>
             </thead>
             <tbody>
@@ -137,10 +145,10 @@
                   <td>
                     {% if record.alert_class %}
                       <span class="alert-badge alert-{{ record.alert_class }}">
-                        {{ record.alert_class|upper }}
+                        {{ alert_labels.get(record.alert_class, record.alert_class)|upper }}
                       </span>
                     {% else %}
-                      <span class="text-muted">n/d</span>
+                      <span class="text-muted">n/a</span>
                     {% endif %}
                   </td>
                 </tr>

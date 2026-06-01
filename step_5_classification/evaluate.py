@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 
 # Alert class names in severity order (index 0–3 corresponds to LABEL_MAP values)
 CLASS_NAMES: List[str] = ["verde", "giallo", "arancio", "rosso"]
+CLASS_DISPLAY_NAMES: List[str] = ["Green", "Yellow", "Orange", "Red"]
 
 # Model artifact names — must match filenames written by train.py
 MODEL_NAMES: List[str] = [
@@ -319,16 +320,16 @@ def plot_confusion_matrix(
         annot=True,
         fmt="d",
         cmap="Blues",
-        xticklabels=CLASS_NAMES,
-        yticklabels=CLASS_NAMES,
+        xticklabels=CLASS_DISPLAY_NAMES,
+        yticklabels=CLASS_DISPLAY_NAMES,
         linewidths=0.5,
         linecolor="lightgray",
         ax=ax,
     )
-    ax.set_xlabel("Classe Predetta", fontsize=11)
-    ax.set_ylabel("Classe Reale", fontsize=11)
+    ax.set_xlabel("Predicted Class", fontsize=11)
+    ax.set_ylabel("True Class", fontsize=11)
     ax.set_title(
-        f"Matrice di Confusione — {model_name}",
+        f"Confusion Matrix - {model_name}",
         fontsize=13,
         fontweight="bold",
     )
@@ -446,7 +447,7 @@ def plot_permutation_importance(
     )
     ax.set_yticks(y_pos)
     ax.set_yticklabels(top_names[::-1], fontsize=9)
-    ax.set_xlabel("Diminuzione media di F1-macro quando la feature è permutata")
+    ax.set_xlabel("Mean F1-macro decrease when the feature is permuted")
     ax.set_title(
         f"Permutation Importance — {model_name}  (top {top_n}, test set)",
         fontweight="bold",

@@ -97,13 +97,13 @@ def forecast_ui_post(
     result = None
     error = None
     if days not in (1, 2):
-        error = "L'orizzonte deve essere 1 o 2 giorni."
+        error = "The forecast horizon must be 1 or 2 days."
     else:
         try:
             result = predictor.predict(station_id, days=days)
         except Exception as exc:  # noqa: BLE001 - surface to user
             log.exception("Forecast UI failure for station %s", station_id)
-            error = f"Previsione non disponibile: {exc}"
+            error = f"Forecast unavailable: {exc}"
 
     return templates.TemplateResponse(
         request,
@@ -157,17 +157,17 @@ def history_ui_post(
         d_from = _parse_iso_date(from_date)
         d_to = _parse_iso_date(to_date)
         if d_from > d_to:
-            raise ValueError("La data iniziale deve precedere quella finale.")
+            raise ValueError("The start date must be on or before the end date.")
 
         records = history_service.get_history(station_id, d_from, d_to)
         if not records:
-            error = "Nessun dato storico disponibile per il periodo selezionato."
+            error = "No historical data is available for the selected period."
         else:
             stations = {s.idstazione: s for s in history_service.get_stations()}
             station = stations.get(station_id)
             title = (
-                f"PM10 — {station.nomestazione} ({station.comune})"
-                if station else f"PM10 — stazione {station_id}"
+                f"PM10 - {station.nomestazione} ({station.comune})"
+                if station else f"PM10 - station {station_id}"
             )
             chart_data = {
                 "title": title,
@@ -175,10 +175,10 @@ def history_ui_post(
                 "pm10": [r.pm10 for r in records],
             }
     except ValueError as exc:
-        error = f"Input non valido: {exc}"
+        error = f"Invalid input: {exc}"
     except Exception as exc:  # noqa: BLE001
         log.exception("History UI failure for station %s", station_id)
-        error = f"Storico non disponibile: {exc}"
+        error = f"History unavailable: {exc}"
 
     return templates.TemplateResponse(
         request,

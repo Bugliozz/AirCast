@@ -162,8 +162,9 @@ def load_no2_hourly(conn: pymysql.Connection) -> pd.DataFrame:
             m.valore    AS no2
         FROM measurements m
         JOIN sensors s ON m.idsensore = s.idsensore
-        WHERE s.tiposensore LIKE '%Azoto%'
+        WHERE LOWER(TRIM(s.tiposensore)) = 'biossido di azoto'
           AND m.valore IS NOT NULL
+          AND m.valore > 0
         ORDER BY s.idstazione, m.data
     """
     df = pd.read_sql(sql, conn, parse_dates=["dt"])

@@ -391,7 +391,7 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
         raise HTTPException(
             status_code=422,
             detail=(
-                "Dati recenti insufficienti per una previsione affidabile "
+                "Insufficient recent data for a reliable forecast "
                 f"(valid_days={valid_days} < 3)."
             ),
         )

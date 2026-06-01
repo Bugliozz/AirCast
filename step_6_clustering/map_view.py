@@ -83,9 +83,9 @@ def build_cluster_map(profiles: pd.DataFrame, labels: np.ndarray) -> folium.Map:
         for _, row in df[df["cluster"] == cluster_id].iterrows():
             popup_html = (
                 f"<strong>{row['nomestazione']}</strong>"
-                f"<br/>Provincia: {row['provincia']}"
+                f"<br/>Province: {row['provincia']}"
                 f"<br/>Cluster: <b>{int(row['cluster'])}</b>"
-                f"<br/>PM10 medio: <b>{row['pm10_mean']:.1f}</b> &mu;g/m&sup3;"
+                f"<br/>Mean PM10: <b>{row['pm10_mean']:.1f}</b> &mu;g/m&sup3;"
             )
             folium.CircleMarker(
                 location=[row["lat"], row["lng"]],

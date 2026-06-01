@@ -1,6 +1,6 @@
-"""Server-side Folium map of Lombardy alert forecasts for day+1.
+"""Server-side Folium map of Lombardy alert forecasts for tomorrow.
 
-The map aggregates a day+1 prediction for every known station and renders a
+The map aggregates a tomorrow prediction for every known station and renders a
 colored marker per station. Because producing many forecasts takes several
 seconds, the rendered HTML is cached in-memory for 15 minutes.
 """
@@ -29,6 +29,14 @@ _ALERT_COLORS = {
     "rosso": "#e74c3c",
 }
 
+_ALERT_LABELS = {
+    "verde": "green",
+    "giallo": "yellow",
+    "arancione": "orange",
+    "arancio": "orange",
+    "rosso": "red",
+}
+
 _cache_html: Optional[str] = None
 _cache_ts: float = 0.0
 
@@ -37,6 +45,10 @@ def _marker_color(alert_class: Optional[str]) -> str:
     if not alert_class:
         return "#6b7c93"
     return _ALERT_COLORS.get(alert_class.lower(), "#6b7c93")
+
+
+def _alert_label(alert_class: str) -> str:
+    return _ALERT_LABELS.get(alert_class.lower(), alert_class)
 
 
 def _build_map_html() -> str:
@@ -63,20 +75,20 @@ def _build_map_html() -> str:
             f"<br/>{station.comune}",
         ]
         if pm10_value is not None:
-            popup_lines.append(f"<br/>PM10 giorno+1: <b>{pm10_value:.1f}</b> &mu;g/m&sup3;")
+            popup_lines.append(f"<br/>PM10 tomorrow: <b>{pm10_value:.1f}</b> &mu;g/m&sup3;")
         if alert_class:
-            popup_lines.append(f"<br/>Allerta: <b>{alert_class}</b>")
+            popup_lines.append(f"<br/>Alert: <b>{_alert_label(alert_class)}</b>")
 
         dq = getattr(station, "data_quality", "ok")
         if dq == "partial":
             border_color, border_weight = "#6b7c93", 3
             popup_lines.append(
-                f"<br/><em>Dati parziali: {station.valid_days_last_7}/7 giorni validi</em>"
+                f"<br/><em>Partial data: {station.valid_days_last_7}/7 valid days</em>"
             )
         elif dq == "stale":
             border_color, border_weight = "#e74c3c", 3
             popup_lines.append(
-                f"<br/><em>Dati insufficienti: {station.valid_days_last_7}/7 giorni validi</em>"
+                f"<br/><em>Insufficient data: {station.valid_days_last_7}/7 valid days</em>"
             )
         else:
             border_color, border_weight = _marker_color(alert_class), 1

@@ -8,6 +8,7 @@ produced by `step_3_eda.db.load_weather_daily_agg`.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import date, timedelta
 from typing import Any
@@ -36,8 +37,12 @@ OPENMETEO_HOURLY_VARS = (
 REQUEST_TIMEOUT = 30
 WEATHER_MAX_RETRIES = 3
 WEATHER_RETRY_BACKOFF = 3.0  # seconds; doubled on each retry
+WEATHER_CACHE_TTL_SECONDS = int(os.environ.get("WEATHER_CACHE_TTL_SECONDS", "3600"))
+COORD_ROUND_DP = int(os.environ.get("WEATHER_COORD_ROUND_DP", "1"))
 
 log = logging.getLogger(__name__)
+
+_forecast_cache: dict[tuple[float, float, int, str], tuple[float, list[dict[str, Any]]]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -230,14 +235,22 @@ def fetch_forecast_weather(
     today = date.today()
     start_date = today + timedelta(days=1)
     end_date = today + timedelta(days=days)
+    lat_r = round(float(lat), COORD_ROUND_DP)
+    lng_r = round(float(lng), COORD_ROUND_DP)
+    cache_key = (lat_r, lng_r, int(days), start_date.isoformat())
+
+    cached = _forecast_cache.get(cache_key)
+    if cached and (time.time() - cached[0]) < WEATHER_CACHE_TTL_SECONDS:
+        return [dict(record) for record in cached[1]]
 
     log.debug(
         "Fetching forecast weather lat=%.4f lng=%.4f %s → %s",
-        float(lat), float(lng), start_date, end_date,
+        lat_r, lng_r, start_date, end_date,
     )
 
-    raw = _fetch_raw(lat, lng, start_date, end_date)
+    raw = _fetch_raw(lat_r, lng_r, start_date, end_date)
     records = _aggregate_daily(raw)
+    _forecast_cache[cache_key] = (time.time(), [dict(record) for record in records])
 
     log.debug("Aggregated %d daily weather records.", len(records))
     return records

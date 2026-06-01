@@ -30,7 +30,19 @@ log = logging.getLogger(__name__)
 sns.set_theme(style="whitegrid", palette="colorblind")
 plt.rcParams.update({"figure.dpi": PLOT_DPI, "savefig.dpi": PLOT_DPI})
 
-_WEEKDAY_LABELS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
+_WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_ALERT_LABELS = {
+    "verde": "Green",
+    "giallo": "Yellow",
+    "arancio": "Orange",
+    "rosso": "Red",
+}
+_SEASON_LABELS = {
+    "inverno": "Winter",
+    "primavera": "Spring",
+    "estate": "Summer",
+    "autunno": "Autumn",
+}
 
 
 def _savefig(fig: plt.Figure, path: Path) -> None:
@@ -65,8 +77,8 @@ def plot_missing_values(df: pd.DataFrame, out: Path) -> None:
         cbar_kws={"label": "% Missing"},
         ax=ax,
     )
-    ax.set_title("Missing Values — Stazione x Feature")
-    ax.set_ylabel("Stazione")
+    ax.set_title("Missing Values - Station x Feature")
+    ax.set_ylabel("Station")
     ax.set_xlabel("")
     _savefig(fig, out / "01_missing_values_heatmap.png")
 
@@ -84,7 +96,7 @@ def plot_pm10_distribution(df: pd.DataFrame, out: Path) -> None:
     thresholds[-1] = df["pm10"].max() * 1.05 if df["pm10"].max() > 50 else 80
     for i, label in enumerate(PM10_LABELS):
         ax.axvspan(thresholds[i], thresholds[i + 1], alpha=0.12,
-                   color=ALERT_COLORS[label], label=label)
+                   color=ALERT_COLORS[label], label=_ALERT_LABELS.get(label, label))
 
     sns.histplot(df["pm10"], kde=True, bins=50, ax=ax, color="steelblue", edgecolor="white")
 
@@ -93,10 +105,10 @@ def plot_pm10_distribution(df: pd.DataFrame, out: Path) -> None:
         ax.axvline(t, ls="--", lw=1.2, color="gray")
         ax.text(t + 0.5, ax.get_ylim()[1] * 0.95, f"{t}", fontsize=9, color="gray")
 
-    ax.set_title("Distribuzione PM10 giornaliero")
+    ax.set_title("Daily PM10 Distribution")
     ax.set_xlabel("PM10 (µg/m³)")
-    ax.set_ylabel("Frequenza")
-    ax.legend(title="Classe allerta", loc="upper right")
+    ax.set_ylabel("Frequency")
+    ax.legend(title="Alert class", loc="upper right")
     _savefig(fig, out / "02_pm10_distribution.png")
 
 
@@ -110,7 +122,8 @@ def plot_class_distribution(df: pd.DataFrame, out: Path) -> None:
     total = counts.sum()
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar(counts.index, counts.values,
+    display_labels = [_ALERT_LABELS.get(label, label) for label in counts.index]
+    bars = ax.bar(display_labels, counts.values,
                   color=[ALERT_COLORS[l] for l in counts.index], edgecolor="white")
 
     for bar, val in zip(bars, counts.values):
@@ -118,9 +131,9 @@ def plot_class_distribution(df: pd.DataFrame, out: Path) -> None:
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + total * 0.005,
                 f"{val}\n({pct:.1f}%)", ha="center", va="bottom", fontsize=10)
 
-    ax.set_title("Distribuzione classi di allerta")
-    ax.set_ylabel("Conteggio")
-    ax.set_xlabel("Classe allerta")
+    ax.set_title("Alert Class Distribution")
+    ax.set_ylabel("Count")
+    ax.set_xlabel("Alert class")
     _savefig(fig, out / "03_class_distribution.png")
 
 
@@ -140,7 +153,7 @@ def plot_correlation_heatmap(df: pd.DataFrame, out: Path) -> None:
         cmap="RdBu_r", center=0, vmin=-1, vmax=1,
         linewidths=0.5, ax=ax, annot_kws={"size": 7},
     )
-    ax.set_title("Matrice di correlazione (Pearson)")
+    ax.set_title("Correlation Matrix (Pearson)")
     _savefig(fig, out / "04_correlation_heatmap.png")
 
 
@@ -153,7 +166,7 @@ def plot_pm10_timeseries(df: pd.DataFrame, out: Path) -> None:
     daily = df.groupby("data_giorno")["pm10"].agg(["mean", "std"]).reset_index()
 
     fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
-    ax.plot(daily["data_giorno"], daily["mean"], lw=1.2, color="steelblue", label="Media giornaliera")
+    ax.plot(daily["data_giorno"], daily["mean"], lw=1.2, color="steelblue", label="Daily mean")
     ax.fill_between(
         daily["data_giorno"],
         daily["mean"] - daily["std"],
@@ -162,10 +175,16 @@ def plot_pm10_timeseries(df: pd.DataFrame, out: Path) -> None:
     )
 
     for t, label in zip(PM10_THRESHOLDS[1:-1], PM10_LABELS[1:]):
-        ax.axhline(t, ls="--", lw=0.8, color=ALERT_COLORS[label], label=f"Soglia {label} ({t})")
+        ax.axhline(
+            t,
+            ls="--",
+            lw=0.8,
+            color=ALERT_COLORS[label],
+            label=f"{_ALERT_LABELS.get(label, label)} threshold ({t})",
+        )
 
-    ax.set_title("PM10 — Serie temporale media giornaliera")
-    ax.set_xlabel("Data")
+    ax.set_title("PM10 - Daily Mean Time Series")
+    ax.set_xlabel("Date")
     ax.set_ylabel("PM10 (µg/m³)")
     ax.legend(loc="upper right", fontsize=8)
     _savefig(fig, out / "05_pm10_timeseries.png")
@@ -179,12 +198,24 @@ def plot_pm10_by_season(df: pd.DataFrame, out: Path) -> None:
     """Boxplot PM10 by meteorological season."""
     present = [s for s in SEASON_ORDER if s in df["stagione"].values]
     fig, ax = plt.subplots(figsize=(8, 5))
-    sns.boxplot(data=df, x="stagione", y="pm10", order=present, ax=ax, palette="coolwarm")
-    ax.set_title("PM10 per stagione")
-    ax.set_xlabel("Stagione")
+    sns.boxplot(
+        data=df,
+        x="stagione",
+        y="pm10",
+        order=present,
+        hue="stagione",
+        hue_order=present,
+        ax=ax,
+        palette="coolwarm",
+        legend=False,
+    )
+    ax.set_xticks(range(len(present)))
+    ax.set_xticklabels([_SEASON_LABELS.get(s, s) for s in present])
+    ax.set_title("PM10 by Season")
+    ax.set_xlabel("Season")
     ax.set_ylabel("PM10 (µg/m³)")
     if len(present) < 4:
-        ax.annotate("Nota: dati disponibili solo per primavera-estate",
+        ax.annotate("Note: data available only for spring-summer",
                      xy=(0.5, 0.01), xycoords="axes fraction", ha="center",
                      fontsize=8, fontstyle="italic", color="gray")
     _savefig(fig, out / "06_pm10_by_season.png")
@@ -197,10 +228,19 @@ def plot_pm10_by_season(df: pd.DataFrame, out: Path) -> None:
 def plot_pm10_by_weekday(df: pd.DataFrame, out: Path) -> None:
     """Boxplot PM10 by day of week."""
     fig, ax = plt.subplots(figsize=(10, 5))
-    sns.boxplot(data=df, x="giorno_settimana", y="pm10", ax=ax, palette="Blues")
+    sns.boxplot(
+        data=df,
+        x="giorno_settimana",
+        y="pm10",
+        hue="giorno_settimana",
+        ax=ax,
+        palette="Blues",
+        legend=False,
+    )
+    ax.set_xticks(range(len(_WEEKDAY_LABELS)))
     ax.set_xticklabels(_WEEKDAY_LABELS)
-    ax.set_title("PM10 per giorno della settimana")
-    ax.set_xlabel("Giorno")
+    ax.set_title("PM10 by Day of Week")
+    ax.set_xlabel("Day")
     ax.set_ylabel("PM10 (µg/m³)")
     _savefig(fig, out / "07_pm10_by_weekday.png")
 
@@ -209,8 +249,8 @@ def plot_pm10_by_weekday(df: pd.DataFrame, out: Path) -> None:
 # 08 — PM10 monthly mean
 # ──────────────────────────────────────────────────────────────────────────────
 
-_MONTH_LABELS = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
-                 "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def plot_pm10_monthly(df: pd.DataFrame, out: Path) -> None:
@@ -228,11 +268,11 @@ def plot_pm10_monthly(df: pd.DataFrame, out: Path) -> None:
         color=[colors[int(m) - 1] for m in monthly["mese"]],
         edgecolor="white",
     )
-    ax.axhline(50, ls="--", lw=1.2, color="red", label="Soglia OMS 50 µg/m³")
+    ax.axhline(50, ls="--", lw=1.2, color="red", label="WHO threshold 50 µg/m³")
     ax.set_xticks(range(1, 13))
     ax.set_xticklabels(_MONTH_LABELS)
-    ax.set_title("PM10 medio per mese (± std)")
-    ax.set_xlabel("Mese")
+    ax.set_title("Mean PM10 by Month (± std)")
+    ax.set_xlabel("Month")
     ax.set_ylabel("PM10 (µg/m³)")
     ax.legend(fontsize=9)
     _savefig(fig, out / "08_pm10_monthly.png")
@@ -246,10 +286,20 @@ def plot_pm10_by_provincia(df: pd.DataFrame, out: Path) -> None:
     """Boxplot PM10 by provincia, sorted by median."""
     order = df.groupby("provincia")["pm10"].median().sort_values(ascending=False).index
     fig, ax = plt.subplots(figsize=(14, 6))
-    sns.boxplot(data=df, x="provincia", y="pm10", order=order, ax=ax, palette="OrRd")
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
-    ax.set_title("PM10 per provincia (ordinate per mediana)")
-    ax.set_xlabel("Provincia")
+    sns.boxplot(
+        data=df,
+        x="provincia",
+        y="pm10",
+        order=order,
+        hue="provincia",
+        hue_order=order,
+        ax=ax,
+        palette="OrRd",
+        legend=False,
+    )
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    ax.set_title("PM10 by Province (sorted by median)")
+    ax.set_xlabel("Province")
     ax.set_ylabel("PM10 (µg/m³)")
     _savefig(fig, out / "09_pm10_by_provincia.png")
 
@@ -259,12 +309,12 @@ def plot_pm10_by_provincia(df: pd.DataFrame, out: Path) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 _WEATHER_SCATTER_VARS = [
-    ("temp_mean", "Temperatura media (°C)"),
-    ("humidity_mean", "Umidità relativa (%)"),
-    ("wind_speed_mean", "Velocità vento (m/s)"),
-    ("pressure_mean", "Pressione (hPa)"),
-    ("blh_mean", "BLH media (m)"),
-    ("precip_sum", "Precipitazione (mm)"),
+    ("temp_mean", "Mean temperature (°C)"),
+    ("humidity_mean", "Relative humidity (%)"),
+    ("wind_speed_mean", "Wind speed (m/s)"),
+    ("pressure_mean", "Pressure (hPa)"),
+    ("blh_mean", "Mean BLH (m)"),
+    ("precip_sum", "Precipitation (mm)"),
 ]
 
 
@@ -294,7 +344,7 @@ def plot_weather_vs_pm10(df: pd.DataFrame, out: Path) -> None:
     for j in range(len(available), len(axes)):
         axes[j].set_visible(False)
 
-    fig.suptitle("Variabili meteo vs PM10", fontsize=13, y=1.01)
+    fig.suptitle("Weather Variables vs PM10", fontsize=13, y=1.01)
     fig.tight_layout()
     _savefig(fig, out / "10_weather_vs_pm10_scatter.png")
 
@@ -318,8 +368,9 @@ def plot_stagnation_vs_pm10(df: pd.DataFrame, out: Path) -> None:
         hue="stagnation_flag", palette={True: "#e53935", False: "#43a047"},
         legend=False,
     )
-    ax.set_xticklabels(["No stagnazione", "Stagnazione"])
-    ax.set_title("PM10 in condizioni di stagnazione atmosferica")
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(["No stagnation", "Stagnation"])
+    ax.set_title("PM10 Under Atmospheric Stagnation Conditions")
     ax.set_xlabel("")
     ax.set_ylabel("PM10 (µg/m³)")
     _savefig(fig, out / "11_stagnation_vs_pm10.png")
@@ -332,8 +383,8 @@ def plot_stagnation_vs_pm10(df: pd.DataFrame, out: Path) -> None:
 def plot_industrial_vs_pm10(df: pd.DataFrame, out: Path) -> None:
     """Scatter plots of industrial proximity features vs PM10."""
     vars_present = [
-        ("dist_industrial_km", "Distanza zona industriale (km)"),
-        ("n_industrial_zones_15km", "N. zone industriali entro 15 km"),
+        ("dist_industrial_km", "Distance to industrial area (km)"),
+        ("n_industrial_zones_15km", "Industrial zones within 15 km"),
     ]
     available = [(col, label) for col, label in vars_present if col in df.columns]
     if not available:
@@ -355,7 +406,7 @@ def plot_industrial_vs_pm10(df: pd.DataFrame, out: Path) -> None:
         ax.set_xlabel(label)
         ax.set_ylabel("PM10 (µg/m³)")
 
-    fig.suptitle("Prossimità industriale vs PM10", fontsize=13)
+    fig.suptitle("Industrial Proximity vs PM10", fontsize=13)
     fig.tight_layout()
     _savefig(fig, out / "12_industrial_vs_pm10.png")
 
@@ -377,7 +428,7 @@ def plot_no2_hourly_profile(no2_hourly: pd.DataFrame, out: Path) -> None:
     df = no2_hourly.assign(
         ora=no2_hourly["dt"].dt.hour,
         tipo=no2_hourly["dt"].dt.dayofweek.isin([5, 6]).map(
-            {True: "Weekend", False: "Feriale"}
+            {True: "Weekend", False: "Weekday"}
         ),
     )
     profile = df.groupby(["ora", "tipo"])["no2"].mean().reset_index()
@@ -388,9 +439,9 @@ def plot_no2_hourly_profile(no2_hourly: pd.DataFrame, out: Path) -> None:
 
     fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
     sns.lineplot(data=profile, x="ora", y="no2", hue="tipo", ax=ax, marker="o", markersize=5)
-    ax.set_title("Profilo orario NO2 — Feriale vs Weekend")
-    ax.set_xlabel("Ora del giorno")
-    ax.set_ylabel("NO2 medio (µg/m³)")
+    ax.set_title("NO2 Hourly Profile - Weekday vs Weekend")
+    ax.set_xlabel("Hour of day")
+    ax.set_ylabel("Mean NO2 (µg/m³)")
     ax.set_xticks(range(24))
     ax.legend(title="")
     _savefig(fig, out / "13_no2_hourly_profile.png")

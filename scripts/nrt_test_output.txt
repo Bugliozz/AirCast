@@ -1,26 +1,26 @@
 === NRT Station Registry: PM10 Sensors ===
-Found 21 PM10 sensors in NRT registry
-  idsensore=6919, idstazione=561, nome=Como v.Cattaneo, tipo=PM10 (SM2005)
-  idsensore=6947, idstazione=643, nome=Pavia p.zza Minerva, tipo=PM10 (SM2005)
-  idsensore=6952, idstazione=654, nome=Sarezzo v.Minelli, tipo=PM10 (SM2005)
-  idsensore=6962, idstazione=595, nome=Filago v.Don Milani, tipo=PM10 (SM2005)
-  idsensore=9740, idstazione=604, nome=Tavazzano con Villavesco v.Cascina Bagnolo, tipo=PM10 (SM2005)
-  idsensore=9831, idstazione=670, nome=Mantova S.Agnese, tipo=PM10 (SM2005)
-  idsensore=9835, idstazione=664, nome=Mantova p.zza Gramsci, tipo=PM10 (SM2005)
-  idsensore=9872, idstazione=673, nome=Voghera v.Pozzoni, tipo=PM10 (SM2005)
+Found 25 PM10 sensors in NRT registry
+  idsensore=6919, idstazione=561, name=Como v.Cattaneo, type=PM10 (SM2005)
+  idsensore=6939, idstazione=600, name=Lodi v.Vignati, type=PM10 (SM2005)
+  idsensore=6947, idstazione=643, name=Pavia p.zza Minerva, type=PM10 (SM2005)
+  idsensore=6951, idstazione=649, name=Brescia v.Broletto, type=PM10 (SM2005)
+  idsensore=6952, idstazione=654, name=Sarezzo v.Minelli, type=PM10 (SM2005)
+  idsensore=6955, idstazione=663, name=Mantova v.Ariosto, type=PM10 (SM2005)
+  idsensore=6962, idstazione=595, name=Filago v.Don Milani, type=PM10 (SM2005)
+  idsensore=9740, idstazione=604, name=Tavazzano con Villavesco v.Cascina Bagnolo, type=PM10 (SM2005)
 
 === Main Station Registry: PM10 Sensors ===
-Found 99 PM10 sensors in main registry
-  idsensore=6939, idstazione=600, nome=Lodi v.Vignati, tipo=PM10 (SM2005)
-  idsensore=6943, idstazione=630, nome=Crema v.Indipendenza, tipo=PM10 (SM2005)
-  idsensore=6915, idstazione=554, nome=Saronno v.Santuario, tipo=PM10 (SM2005)
-  idsensore=10273, idstazione=705, nome=Milano Pascal Città Studi, tipo=PM10 (SM2005)
-  idsensore=10548, idstazione=1269, nome=Dalmine v.Verdi, tipo=PM10 (SM2005)
+Found 95 PM10 sensors in main registry
+  idsensore=9872, idstazione=673, name=Voghera v.Pozzoni, type=PM10 (SM2005)
+  idsensore=6908, idstazione=531, name=Pioltello Limito, type=PM10 (SM2005)
+  idsensore=10354, idstazione=516, name=Robecchetto con Induno v. Pertini, type=PM10 (SM2005)
+  idsensore=20565, idstazione=584, name=Bergamo v.Garibaldi, type=PM10 (SM2005)
+  idsensore=12585, idstazione=1303, name=Cremona v.Gerre Borghi, type=PM10 (SM2005)
 
-NRT PM10 sensors: 21
-Main PM10 sensors: 99
-Overlap: 15
-Only NRT: 6, Only Main: 84
+NRT PM10 sensors: 25
+Main PM10 sensors: 95
+Overlap: 19
+Only NRT: 6, Only Main: 76
 
 NRT idstazione values same as main? Checking overlapping sensors...
   sensor 10027: NRT station=685, Main station=685, match=True
@@ -30,17 +30,25 @@ NRT idstazione values same as main? Checking overlapping sensors...
   sensor 10343: NRT station=708, Main station=708, match=True
 
 === Today's NRT for sensor 6919 (Como v.Cattaneo) ===
-Hourly records: 12
-  2026-04-16T01:00:00.000  val=24
-  2026-04-16T02:00:00.000  val=30
-  2026-04-16T03:00:00.000  val=25
-  2026-04-16T04:00:00.000  val=32
-  2026-04-16T05:00:00.000  val=26
-  2026-04-16T06:00:00.000  val=23
-  2026-04-16T07:00:00.000  val=25
-  2026-04-16T08:00:00.000  val=31
-  2026-04-16T09:00:00.000  val=24
-  2026-04-16T10:00:00.000  val=21
-  2026-04-16T11:00:00.000  val=15
-  2026-04-16T12:00:00.000  val=16
-  -> Daily mean so far: 24.3 ug/m3 (12 hours)
+Hourly records: 20
+  2026-06-01T01:00:00.000  val=14
+  2026-06-01T02:00:00.000  val=9
+  2026-06-01T03:00:00.000  val=6
+  2026-06-01T04:00:00.000  val=6
+  2026-06-01T05:00:00.000  val=7
+  2026-06-01T06:00:00.000  val=6
+  2026-06-01T07:00:00.000  val=13
+  2026-06-01T08:00:00.000  val=18
+  2026-06-01T09:00:00.000  val=10
+  2026-06-01T10:00:00.000  val=22
+  2026-06-01T11:00:00.000  val=10
+  2026-06-01T12:00:00.000  val=19
+  2026-06-01T13:00:00.000  val=10
+  2026-06-01T14:00:00.000  val=13
+  2026-06-01T15:00:00.000  val=10
+  2026-06-01T16:00:00.000  val=13
+  2026-06-01T17:00:00.000  val=10
+  2026-06-01T18:00:00.000  val=13
+  2026-06-01T19:00:00.000  val=12
+  2026-06-01T20:00:00.000  val=11
+  -> Daily mean so far: 11.6 ug/m3 (20 hours)
