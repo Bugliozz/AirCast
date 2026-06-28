@@ -46,6 +46,9 @@ air_quality_data/
 service_account*.json
 credentials*.json
 
+# Course materials (lecture PDFs — not project work, ~19MB)
+Slide/
+
 # IDE
 .vscode/
 .idea/
