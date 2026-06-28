@@ -15,7 +15,18 @@ body {
   background: var(--color-bg);
 }
 
-.navbar-brand img { height: 32px; margin-right: 8px; }
+.navbar-shell {
+  width: 100%;
+  padding-right: clamp(1rem, 3vw, 4rem);
+  padding-left: clamp(1rem, 3vw, 4rem);
+}
+
+.navbar-brand { padding-left: 0; }
+@media (min-width: 992px) {
+  .navbar-nav .nav-item:last-child .nav-link {
+    padding-right: 0;
+  }
+}
 
 main.container { padding-top: 24px; padding-bottom: 48px; }
 
@@ -74,6 +85,76 @@ main.container { padding-top: 24px; padding-bottom: 48px; }
   padding-bottom: 0.35rem;
 }
 
+.driver-panel {
+  border-top: 1px solid var(--color-border);
+  padding-top: 1rem;
+}
+
+.driver-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.driver-section {
+  min-width: 0;
+}
+
+.driver-title {
+  margin: 0 0 0.55rem;
+  color: #0f172a;
+  font-size: 0.94rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.driver-title span {
+  display: block;
+  margin-top: 0.1rem;
+  color: var(--color-muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.driver-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.driver-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: baseline;
+  min-height: 1.65rem;
+  border-bottom: 1px solid rgb(223 230 238 / 70%);
+}
+
+.driver-row dt {
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.driver-row dd {
+  margin: 0;
+  color: var(--color-fg);
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .history-table th {
   white-space: nowrap;
+}
+
+@media (max-width: 575.98px) {
+  .driver-row dd {
+    white-space: normal;
+  }
 }

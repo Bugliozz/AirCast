@@ -10,6 +10,12 @@
     'arancio': 'orange',
     'rosso': 'red'
   } %}
+  {% set source_labels = {
+    'regression': 'PM10 threshold',
+    'hybrid_agreement': 'PM10 + classifier agreement',
+    'hybrid_override': 'Hybrid escalation',
+    'hybrid_no_override': 'PM10 threshold'
+  } %}
 
   <h1 class="h3 mb-3">PM10 forecast by station</h1>
 
@@ -106,37 +112,130 @@
               <span class="alert-badge alert-{{ p.alert_class }}">
                 {{ alert_labels.get(p.alert_class, p.alert_class)|upper }}
               </span>
+              {% if p.alert_source %}
+                <div class="small text-muted text-end mt-1">
+                  {{ source_labels.get(p.alert_source, p.alert_source) }}
+                </div>
+              {% endif %}
             </div>
           </div>
 
-          <table class="table table-sm mt-3 mb-0">
-            <thead>
-              <tr>
-                <th>Average temperature</th>
-                <th>Average wind</th>
-                <th>Boundary Layer Height</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>
-                  {% if p.weather_used.temp_mean is not none %}
-                    {{ "%.1f"|format(p.weather_used.temp_mean) }} &deg;C
-                  {% else %}&mdash;{% endif %}
-                </td>
-                <td>
-                  {% if p.weather_used.wind_speed_mean is not none %}
-                    {{ "%.1f"|format(p.weather_used.wind_speed_mean) }} m/s
-                  {% else %}&mdash;{% endif %}
-                </td>
-                <td>
-                  {% if p.weather_used.boundary_layer_height_mean is not none %}
-                    {{ "%.0f"|format(p.weather_used.boundary_layer_height_mean) }} m
-                  {% else %}&mdash;{% endif %}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          {% if p.model_drivers %}
+            {% set d = p.model_drivers %}
+            <div class="driver-panel mt-3">
+              <div class="driver-grid">
+                <section class="driver-section">
+                  <h3 class="driver-title">Weather forecast <span>Open-Meteo · {{ p.date }}</span></h3>
+                  <dl class="driver-list">
+                    <div class="driver-row">
+                      <dt>Average temperature</dt>
+                      <dd>{% if d.temp_mean is not none %}{{ "%.1f"|format(d.temp_mean) }} &deg;C{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Average wind</dt>
+                      <dd>{% if d.wind_speed_mean is not none %}{{ "%.1f"|format(d.wind_speed_mean) }} m/s{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Wind max</dt>
+                      <dd>{% if d.wind_speed_max is not none %}{{ "%.1f"|format(d.wind_speed_max) }} m/s{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Pressure</dt>
+                      <dd>{% if d.pressure_mean is not none %}{{ "%.0f"|format(d.pressure_mean) }} hPa{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Precipitation</dt>
+                      <dd>{% if d.precip_sum is not none %}{{ "%.1f"|format(d.precip_sum) }} mm{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>BLH mean</dt>
+                      <dd>{% if d.blh_mean is not none %}{{ "%.0f"|format(d.blh_mean) }} m{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>BLH min</dt>
+                      <dd>{% if d.blh_min is not none %}{{ "%.0f"|format(d.blh_min) }} m{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="driver-section">
+                  <h3 class="driver-title">Recent PM10 <span>ARPA / bucket / NRT</span></h3>
+                  <dl class="driver-list">
+                    <div class="driver-row">
+                      <dt>Lag-1</dt>
+                      <dd>{% if d.pm10_lag1 is not none %}{{ "%.1f"|format(d.pm10_lag1) }} &mu;g/m&sup3;{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Lag-2</dt>
+                      <dd>{% if d.pm10_lag2 is not none %}{{ "%.1f"|format(d.pm10_lag2) }} &mu;g/m&sup3;{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Rolling 3d</dt>
+                      <dd>{% if d.pm10_roll3 is not none %}{{ "%.1f"|format(d.pm10_roll3) }} &mu;g/m&sup3;{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Rolling 7d</dt>
+                      <dd>{% if d.pm10_roll7 is not none %}{{ "%.1f"|format(d.pm10_roll7) }} &mu;g/m&sup3;{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Recent change</dt>
+                      <dd>{% if d.pm10_diff is not none %}{{ "%+.1f"|format(d.pm10_diff) }} &mu;g/m&sup3;{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="driver-section">
+                  <h3 class="driver-title">Recent pollutants <span>ARPA / station</span></h3>
+                  <dl class="driver-list">
+                    <div class="driver-row">
+                      <dt>NO2 mean</dt>
+                      <dd>{% if d.no2_mean is not none %}{{ "%.1f"|format(d.no2_mean) }} &mu;g/m&sup3;{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>O3 mean</dt>
+                      <dd>{% if d.o3_mean is not none %}{{ "%.1f"|format(d.o3_mean) }} &mu;g/m&sup3;{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="driver-section">
+                  <h3 class="driver-title">Derived indicators <span>from forecast weather</span></h3>
+                  <dl class="driver-list">
+                    <div class="driver-row">
+                      <dt>Stagnation index</dt>
+                      <dd>{% if d.stagnation_index is not none %}{{ "%.4f"|format(d.stagnation_index) }}{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Stagnation flag</dt>
+                      <dd>{% if d.stagnation_flag is not none %}{{ "Yes" if d.stagnation_flag else "No" }}{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <section class="driver-section">
+                  <h3 class="driver-title">Station & calendar <span>static / target date</span></h3>
+                  <dl class="driver-list">
+                    <div class="driver-row">
+                      <dt>Season</dt>
+                      <dd>{% if d.stagione %}{{ d.stagione|capitalize }}{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Heating season</dt>
+                      <dd>{% if d.heating_season is not none %}{{ "Yes" if d.heating_season else "No" }}{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Province</dt>
+                      <dd>{% if d.provincia %}{{ d.provincia }}{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                    <div class="driver-row">
+                      <dt>Industrial dist.</dt>
+                      <dd>{% if d.dist_industrial_km is not none %}{{ "%.1f"|format(d.dist_industrial_km) }} km{% else %}&mdash;{% endif %}</dd>
+                    </div>
+                  </dl>
+                </section>
+              </div>
+            </div>
+          {% endif %}
 
           {% if loop.index == 2 %}
             <p class="disclaimer mt-3 mb-0">
