@@ -247,10 +247,11 @@ The following 11 hourly variables are collected per station per day:
 
 ### 4.4 Industrial Zone Proximity
 
-A supplementary static feature captures the proximity of each monitoring station to industrial areas. OpenStreetMap industrial land-use polygons are downloaded via the Overpass API (`fetch_industrial_zones.py`) and stored as a GeoJSON file. The spatial computation (§5.4) produces two per-station features:
+A supplementary static feature captures the proximity of each monitoring station to industrial areas. OpenStreetMap industrial land-use polygons are downloaded via the Overpass API (`fetch_industrial_zones.py`) and stored as a GeoJSON file. The spatial computation (§5.4) produces one per-station feature:
 
 - `dist_industrial_km`: Euclidean distance to the nearest industrial zone boundary.
-- `n_industrial_zones_15km`: count of distinct industrial zones within a 15 km radius.
+
+> **Note on a dropped feature.** An earlier `n_industrial_zones_15km` (count of distinct industrial zones within a 15 km radius) was removed after analysis. Permutation importance ranked it near the bottom in both the regressor and the classifier (ΔR² ≈ 0.0005; Δf1_macro ≈ 0.0004, statistically indistinguishable from noise), and a with/without retrain confirmed every metric moved by ≤0.02 with mixed sign. The count merely reflected the granularity of OSM `landuse=industrial` polygon fragmentation rather than a physical quantity, so it was dropped. `dist_industrial_km` is retained — it carries a small but consistent signal and acts as a station-context proxy correlated with baseline PM10 (not a causal measure of industrial exposure).
 
 ### 4.5 Cloud Backfill and Daily Refresh
 
@@ -296,7 +297,7 @@ The ingestion orchestrator (`ingest.py`) proceeds in four phases:
 
 3. **Weather**: similarly iterates over `*_weather.json` files. Each file contains a per-station list of hourly time series. The loader flattens the nested JSON structure (one row per station-hour) and inserts into `weather_hourly`.
 
-4. **Industrial proximity**: if `data/raw/industrial_zones.geojson` exists, `spatial.py` is called to compute `dist_industrial_km` and `n_industrial_zones_15km` for each station using GeoPandas and the Haversine distance metric. The result is saved as `data/raw/industrial_proximity.parquet`.
+4. **Industrial proximity**: if `data/raw/industrial_zones.geojson` exists, `spatial.py` is called to compute `dist_industrial_km` for each station using GeoPandas in a projected metric CRS (EPSG:32632). The result is saved as `data/raw/industrial_proximity.parquet`.
 
 ### 5.3 Batch Insert Strategy
 
@@ -307,9 +308,8 @@ Rather than issuing one `INSERT` per record, the loader uses `executemany` with 
 `spatial.py` reads the station coordinates from MySQL and the industrial polygon boundaries from GeoJSON, both loaded as GeoDataFrames using GeoPandas. It then computes:
 
 - **`dist_industrial_km`**: the minimum distance from each station point to the nearest industrial polygon boundary, using the projected CRS (EPSG:32632, UTM Zone 32N) for metric accuracy.
-- **`n_industrial_zones_15km`**: a count of distinct polygons whose boundary intersects a 15 km buffer around each station.
 
-These features represent a proxy for local emission sources and complement the meteorological predictors.
+This feature represents a station-context proxy correlated with baseline emissions and complements the meteorological predictors. (A companion `n_industrial_zones_15km` count was evaluated and dropped — see §4.4.)
 
 ---
 
@@ -365,7 +365,7 @@ The final feature set spans seven semantic groups:
 | **Meteorological lags** | `pressure_mean_lag1`, `wind_speed_mean_lag1/lag2`, `blh_mean_lag1/lag2`, `temp_mean_lag1/lag2`, `pressure_roll3`, `wind_speed_roll3` | Lagged meteorology captures persistence of anticyclonic regimes |
 | **Secondary pollutants** | `no2_mean`, `no2_max`, `o3_mean`, `o3_max`, `co_mean` | Traffic-sourced NO₂ and photochemical O₃ co-vary with PM10 sources and sinks |
 | **Temporal** | `mese`, `stagione`, `giorno_settimana`, `is_weekend`, `heating_season`, `mese_sin`, `mese_cos`, `dow_sin`, `dow_cos` | Strong seasonal and weekly patterns; cyclic encoding prevents ordinal artefacts |
-| **Spatial/static** | `quota`, `lat`, `lng`, `provincia`, `dist_industrial_km`, `n_industrial_zones_15km` | Station location captures orographic and industrial exposure differences |
+| **Spatial/static** | `quota`, `lat`, `lng`, `provincia`, `dist_industrial_km` | Station location captures orographic and industrial exposure differences |
 | **Derived** | `stagnation_flag`, `stagnation_index` | Engineered domain features capturing the main meteorological mechanism for PM10 accumulation |
 
 ### 6.4 Temporal Features and Cyclic Encoding

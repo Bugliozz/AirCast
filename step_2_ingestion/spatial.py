@@ -1,8 +1,12 @@
 """Spatial feature engineering: station proximity to industrial zones.
 
 Uses GeoPandas to compute, for each ARPA station:
-- dist_industrial_km:       distance to the nearest industrial zone border
-- n_industrial_zones_15km:  count of industrial zones within a 15 km radius
+- dist_industrial_km:  distance to the nearest industrial zone border
+
+Note: a former ``n_industrial_zones_15km`` count feature was dropped — an
+ablation (permutation importance + retrain) showed it carried no measurable
+predictive signal and merely counted OSM ``landuse=industrial`` polygon
+fragments rather than a physical quantity.
 """
 
 from __future__ import annotations
@@ -53,14 +57,13 @@ def load_industrial_zones(geojson_path: Path) -> gpd.GeoDataFrame:
 def compute_industrial_proximity(
     stations_gdf: gpd.GeoDataFrame,
     zones_gdf: gpd.GeoDataFrame,
-    radius_km: float = 15.0,
 ) -> pd.DataFrame:
-    """Compute distance to nearest industrial zone and count within radius.
+    """Compute distance to the nearest industrial zone for each station.
 
     Both GeoDataFrames must be in a metric CRS (EPSG:32632).
 
     Returns DataFrame with columns:
-        idstazione, dist_industrial_km, n_industrial_zones_15km
+        idstazione, dist_industrial_km
     """
     # --- Nearest distance ---
     nearest = gpd.sjoin_nearest(
@@ -73,31 +76,11 @@ def compute_industrial_proximity(
     nearest = nearest.sort_values("dist_m").drop_duplicates(subset="idstazione", keep="first")
     nearest["dist_industrial_km"] = nearest["dist_m"] / 1_000
 
-    # --- Count within radius ---
-    radius_m = radius_km * 1_000
-    buffered = stations_gdf[["idstazione", "geometry"]].copy()
-    buffered["geometry"] = buffered.geometry.buffer(radius_m)
-
-    within = gpd.sjoin(buffered, zones_gdf[["geometry"]], how="left", predicate="intersects")
-    counts = (
-        within.groupby("idstazione")["index_right"]
-        .apply(lambda s: s.notna().sum())
-        .rename("n_industrial_zones_15km")
-        .reset_index()
-    )
-
-    # --- Merge ---
-    result = (
-        nearest[["idstazione", "dist_industrial_km"]]
-        .merge(counts, on="idstazione", how="left")
-    )
-    result["n_industrial_zones_15km"] = result["n_industrial_zones_15km"].fillna(0).astype(int)
+    result = nearest[["idstazione", "dist_industrial_km"]].reset_index(drop=True)
 
     log.info(
-        "Industrial proximity: %d stations, median dist %.1f km, max zones within %d km: %d.",
+        "Industrial proximity: %d stations, median dist %.1f km.",
         len(result),
         result["dist_industrial_km"].median(),
-        radius_km,
-        result["n_industrial_zones_15km"].max(),
     )
     return result

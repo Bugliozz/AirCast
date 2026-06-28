@@ -15,7 +15,25 @@ class _DummyRegressionModel:
 
     def __init__(self) -> None:
         self.feature_names_in_ = np.array(
-            ["pm10_lag1", "pm10_lag2", "pm10_roll7", "pm10_roll3", "pm10_diff"],
+            [
+                "pm10_lag1",
+                "pm10_lag2",
+                "pm10_roll7",
+                "pm10_roll3",
+                "pm10_diff",
+                "pressure_mean_lag1",
+                "pressure_mean_lag2",
+                "pressure_roll3",
+                "wind_speed_mean_lag1",
+                "wind_speed_mean_lag2",
+                "wind_speed_roll3",
+                "blh_mean_lag1",
+                "blh_mean_lag2",
+                "temp_mean_lag1",
+                "temp_mean_lag2",
+                "no2_mean",
+                "o3_mean",
+            ],
             dtype=object,
         )
         self.last_X: pd.DataFrame | None = None
@@ -41,7 +59,6 @@ def _make_lag_data() -> pd.DataFrame:
             "lat": [45.50] * 8,
             "lng": [9.20] * 8,
             "dist_industrial_km": [3.4] * 8,
-            "n_industrial_zones_15km": [2.0] * 8,
             "pm10": [18.0, 21.0, np.nan, 25.0, 30.0, 28.0, 35.0, np.nan],
             "no2_mean": [20.0] * 8,
             "o3_mean": [35.0] * 8,
@@ -110,6 +127,38 @@ def test_build_features_caps_forward_fill_at_two_days(monkeypatch) -> None:
     assert row["pm10_lag2"] == 30.0
     assert row["pm10_roll3"] == 30.0
     assert np.isclose(row["pm10_roll7"], 26.666666666666668)
+
+
+def test_build_features_keeps_expected_lag_missing_when_nrt_row_has_no_weather(monkeypatch) -> None:
+    regression_model = _DummyRegressionModel()
+    monkeypatch.setattr(predictor, "_regression_model", regression_model)
+
+    lag_data = _make_lag_data()
+    lag_data.loc[lag_data.index[-1], [
+        "pressure_mean",
+        "wind_speed_mean",
+        "blh_mean",
+        "temp_mean",
+        "no2_mean",
+        "o3_mean",
+    ]] = np.nan
+
+    features = predictor.build_features(
+        station_id="S1",
+        target_date=date(2026, 4, 16),
+        weather_daily=_make_weather(),
+        lag_data=lag_data,
+    )
+
+    row = features.iloc[0]
+    assert np.isnan(row["pressure_mean_lag1"])
+    assert row["pressure_mean_lag2"] == 1015.0
+    assert np.isnan(row["wind_speed_mean_lag1"])
+    assert np.isnan(row["blh_mean_lag1"])
+    assert np.isnan(row["temp_mean_lag1"])
+    assert np.isnan(row["no2_mean"])
+    assert np.isnan(row["o3_mean"])
+    assert np.isnan(row["pressure_roll3"])
 
 
 def test_predict_handles_trailing_nan_pm10_without_raising(monkeypatch) -> None:

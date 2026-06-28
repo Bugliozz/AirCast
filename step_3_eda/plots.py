@@ -381,10 +381,9 @@ def plot_stagnation_vs_pm10(df: pd.DataFrame, out: Path) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_industrial_vs_pm10(df: pd.DataFrame, out: Path) -> None:
-    """Scatter plots of industrial proximity features vs PM10."""
+    """Scatter plot of industrial proximity vs PM10."""
     vars_present = [
         ("dist_industrial_km", "Distance to industrial area (km)"),
-        ("n_industrial_zones_15km", "Industrial zones within 15 km"),
     ]
     available = [(col, label) for col, label in vars_present if col in df.columns]
     if not available:

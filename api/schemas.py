@@ -31,6 +31,33 @@ class WeatherUsed(BaseModel):
     boundary_layer_height_mean: Optional[float] = None
 
 
+class ForecastDrivers(BaseModel):
+    """Most relevant model input features exposed for forecast explainability."""
+
+    temp_mean: Optional[float] = None
+    pm10_lag1: Optional[float] = None
+    pm10_lag2: Optional[float] = None
+    pm10_roll3: Optional[float] = None
+    pm10_roll7: Optional[float] = None
+    pm10_diff: Optional[float] = None
+    pressure_mean: Optional[float] = None
+    pressure_mean_lag1: Optional[float] = None
+    wind_speed_mean: Optional[float] = None
+    wind_speed_max: Optional[float] = None
+    wind_speed_roll3: Optional[float] = None
+    blh_mean: Optional[float] = None
+    blh_min: Optional[float] = None
+    precip_sum: Optional[float] = None
+    stagnation_index: Optional[float] = None
+    stagnation_flag: Optional[bool] = None
+    no2_mean: Optional[float] = None
+    o3_mean: Optional[float] = None
+    heating_season: Optional[int] = None
+    stagione: Optional[str] = None
+    provincia: Optional[str] = None
+    dist_industrial_km: Optional[float] = None
+
+
 class ForecastItem(BaseModel):
     """Single-day forecast for one station."""
 
@@ -38,7 +65,9 @@ class ForecastItem(BaseModel):
     pm10_predicted: float
     alert_class: str          # "verde" | "giallo" | "arancio" | "rosso"
     alert_index: int          # 0–3 (ordinal severity)
+    alert_source: Optional[str] = None
     weather_used: WeatherUsed
+    model_drivers: Optional[ForecastDrivers] = None
 
 
 class ForecastResponse(BaseModel):

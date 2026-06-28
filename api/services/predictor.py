@@ -144,7 +144,7 @@ def get_lag_features(station_id: str, conn: Any = None) -> pd.DataFrame:
     meta = get_station_metadata(station_id)
     for col in (
         "nomestazione", "comune", "provincia", "quota", "lat", "lng",
-        "dist_industrial_km", "n_industrial_zones_15km",
+        "dist_industrial_km",
     ):
         recent[col] = meta.get(col)
 
@@ -167,7 +167,6 @@ def get_station_metadata(station_id: str) -> Dict[str, Any]:
         "lat": float(latest["lat"]),
         "lng": float(latest["lng"]),
         "dist_industrial_km": float(latest["dist_industrial_km"]),
-        "n_industrial_zones_15km": float(latest["n_industrial_zones_15km"]),
     }
 
 
@@ -220,6 +219,31 @@ def _compute_pm10_feature_context(lag_data: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
+def _lag_values_from_position(
+    lag_data: pd.DataFrame,
+    column: str,
+) -> tuple[float, float]:
+    """Return lag-1/lag-2 from the expected row positions without fallback."""
+    if column not in lag_data.columns:
+        return np.nan, np.nan
+    values = pd.to_numeric(lag_data[column], errors="coerce").reset_index(drop=True)
+    lag1 = float(values.iloc[-1]) if len(values) >= 1 and pd.notna(values.iloc[-1]) else np.nan
+    lag2 = float(values.iloc[-2]) if len(values) >= 2 and pd.notna(values.iloc[-2]) else np.nan
+    return lag1, lag2
+
+
+def _rolling_mean_from_position(
+    lag_data: pd.DataFrame,
+    column: str,
+    window: int,
+) -> float:
+    """Return a trailing rolling mean only when the full expected window exists."""
+    if column not in lag_data.columns:
+        return np.nan
+    values = pd.to_numeric(lag_data[column], errors="coerce").tail(window)
+    return float(values.mean()) if len(values) == window and values.notna().all() else np.nan
+
+
 def build_features(
     station_id: str,
     target_date: date,
@@ -247,7 +271,6 @@ def build_features(
         raise StationNotFoundError(f"No historical data for station '{station_id}'.")
 
     last = lag_data.iloc[-1]
-    prev = lag_data.iloc[-2] if len(lag_data) >= 2 else last
 
     # ---- Static metadata -------------------------------------------------
     row: Dict[str, Any] = {
@@ -256,7 +279,6 @@ def build_features(
         "lat": float(last["lat"]),
         "lng": float(last["lng"]),
         "dist_industrial_km": float(last["dist_industrial_km"]),
-        "n_industrial_zones_15km": float(last["n_industrial_zones_15km"]),
     }
 
     # ---- Weather (forecast) ---------------------------------------------
@@ -268,9 +290,10 @@ def build_features(
     for k in weather_keys:
         row[k] = weather_daily.get(k)
 
-    # ---- Pollutants (no forecast available) — carry forward -------------
+    # ---- Pollutants (no forecast available) — latest expected observation
     for k in ("no2_mean", "o3_mean", "no2_max", "o3_max"):
-        row[k] = last.get(k)
+        lag1, _ = _lag_values_from_position(lag_data, k)
+        row[k] = lag1
 
     # ---- Temporal --------------------------------------------------------
     ts = pd.Timestamp(target_date)
@@ -299,16 +322,18 @@ def build_features(
     })
 
     # ---- Meteo lags / rolling — shift history by one day ----------------
-    # Today's predicted-day "_lag1" = yesterday's observed value (last row).
     meteo_vars = ["pressure_mean", "wind_speed_mean", "blh_mean", "temp_mean"]
     for var in meteo_vars:
-        row[f"{var}_lag1"] = float(last[var]) if pd.notna(last[var]) else np.nan
-        row[f"{var}_lag2"] = float(prev[var]) if pd.notna(prev[var]) else np.nan
+        lag1, lag2 = _lag_values_from_position(lag_data, var)
+        row[f"{var}_lag1"] = lag1
+        row[f"{var}_lag2"] = lag2
 
-    pressure_hist = lag_data["pressure_mean"].astype(float).tail(3)
-    wind_hist = lag_data["wind_speed_mean"].astype(float).tail(3)
-    row["pressure_roll3"] = float(pressure_hist.mean()) if len(pressure_hist) == 3 else np.nan
-    row["wind_speed_roll3"] = float(wind_hist.mean()) if len(wind_hist) == 3 else np.nan
+    row["pressure_roll3"] = _rolling_mean_from_position(
+        lag_data, "pressure_mean", window=3
+    )
+    row["wind_speed_roll3"] = _rolling_mean_from_position(
+        lag_data, "wind_speed_mean", window=3
+    )
 
     # ---- Stagnation (from forecast weather) ------------------------------
     row["stagnation_flag"] = _stagnation_flag(
@@ -371,6 +396,58 @@ def _apply_hybrid_rule(
     return class_reg, "hybrid_no_override"
 
 
+def _clean_driver_value(value: Any) -> Any:
+    """Return JSON/template-friendly values for model driver display."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    if isinstance(value, (np.floating, np.integer)):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    return value
+
+
+def _build_model_drivers(feature_row: pd.Series) -> Dict[str, Any]:
+    """Extract the highest-signal model inputs shown in the Forecast UI."""
+    numeric_keys = (
+        "temp_mean",
+        "pm10_lag1",
+        "pm10_lag2",
+        "pm10_roll3",
+        "pm10_roll7",
+        "pm10_diff",
+        "pressure_mean",
+        "pressure_mean_lag1",
+        "wind_speed_mean",
+        "wind_speed_max",
+        "wind_speed_roll3",
+        "blh_mean",
+        "blh_min",
+        "precip_sum",
+        "stagnation_index",
+        "no2_mean",
+        "o3_mean",
+        "heating_season",
+        "dist_industrial_km",
+    )
+    drivers = {key: _clean_driver_value(feature_row.get(key)) for key in numeric_keys}
+
+    stagnation_flag = _clean_driver_value(feature_row.get("stagnation_flag"))
+    drivers["stagnation_flag"] = (
+        bool(stagnation_flag) if stagnation_flag is not None else None
+    )
+    for key in ("stagione", "provincia"):
+        value = _clean_driver_value(feature_row.get(key))
+        drivers[key] = str(value) if value is not None else None
+
+    return drivers
+
+
 def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
     """Predict PM10 + alert class for the next *days* calendar days.
 
@@ -429,6 +506,7 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
             rolling_lag,
             pm10_context=pm10_context,
         )
+        model_drivers = _build_model_drivers(X_future.iloc[0])
 
         pm10_pred = float(_regression_model.predict(X_future)[0])
         proba_cls = _calibrated_classifier.predict_proba(X_future)[0]
@@ -448,6 +526,7 @@ def predict(station_id: str, days: int = 1, conn: Any = None) -> Dict[str, Any]:
                 "wind_speed_mean": weather.get("wind_speed_mean"),
                 "boundary_layer_height_mean": weather.get("blh_mean"),
             },
+            "model_drivers": model_drivers,
         })
 
         # For the chained day+2 prediction: append the predicted row so the
