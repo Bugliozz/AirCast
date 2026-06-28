@@ -211,28 +211,6 @@
                     </div>
                   </dl>
                 </section>
-
-                <section class="driver-section">
-                  <h3 class="driver-title">Station & calendar <span>static / target date</span></h3>
-                  <dl class="driver-list">
-                    <div class="driver-row">
-                      <dt>Season</dt>
-                      <dd>{% if d.stagione %}{{ d.stagione|capitalize }}{% else %}&mdash;{% endif %}</dd>
-                    </div>
-                    <div class="driver-row">
-                      <dt>Heating season</dt>
-                      <dd>{% if d.heating_season is not none %}{{ "Yes" if d.heating_season else "No" }}{% else %}&mdash;{% endif %}</dd>
-                    </div>
-                    <div class="driver-row">
-                      <dt>Province</dt>
-                      <dd>{% if d.provincia %}{{ d.provincia }}{% else %}&mdash;{% endif %}</dd>
-                    </div>
-                    <div class="driver-row">
-                      <dt>Industrial dist.</dt>
-                      <dd>{% if d.dist_industrial_km is not none %}{{ "%.1f"|format(d.dist_industrial_km) }} km{% else %}&mdash;{% endif %}</dd>
-                    </div>
-                  </dl>
-                </section>
               </div>
             </div>
           {% endif %}
