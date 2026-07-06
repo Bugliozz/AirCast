@@ -618,27 +618,23 @@ def run_evaluation(artifacts_dir_path: Optional[str] = None) -> Dict[str, Dict]:
         best_evaluated_model_name, results[best_evaluated_model_name]["f1_macro"],
     )
 
-    # 5. Permutation importance for the best classifier model
-    # Load from best_model.joblib (identical pipeline saved by train.py)
-    best_model_path = artifacts_dir / "best_model.joblib"
-    if best_model_path.exists() and pipelines:
-        best_pipeline: Pipeline = joblib.load(best_model_path)
-        importance_model_name = (
-            best_model_name
-            if best_model_name in pipelines
-            else max(pipelines, key=lambda m: results[m]["f1_macro"])
-        )
-        plot_permutation_importance(
-            best_pipeline,
-            X_test,
-            y_test,
-            importance_model_name,
-            plots_dir,
-        )
+    # 5. Permutation importance for every base classifier (parity with the
+    # Step 4 regression evaluation, which plots importance for all models).
+    if pipelines:
+        for model_name in MODEL_NAMES:
+            pipeline = pipelines.get(model_name)
+            if pipeline is None:
+                continue
+            plot_permutation_importance(
+                pipeline,
+                X_test,
+                y_test,
+                model_name,
+                plots_dir,
+            )
     else:
         logger.warning(
-            "best_model.joblib not found at '%s' — skipping permutation importance.",
-            best_model_path,
+            "No classifier pipelines loaded — skipping permutation importance."
         )
 
     # 6. Save classification_metrics.json
