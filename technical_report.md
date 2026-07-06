@@ -697,12 +697,12 @@ The calibrated model is used as the base for the hybrid strategy (Phase 2), beca
 
 | Strategy | F1-macro | Recall rosso | Severe error rate | C1 | C2 | Production ready |
 |---|---|---|---|---|---|---|
-| `logistic_regression` | 0.618 | 0.655 | 2.72% | ✓ | ✗ | **NO** |
-| `random_forest` | 0.633 | 0.568 | 2.15% | ✗ | ✓ | **NO** |
-| `xgboost` | 0.640 | 0.617 | 1.96% | ✗ | ✓ | **NO** |
-| `regression_to_class_xgboost` | 0.625 | 0.395 | 1.56% | ✗ | ✓ | **NO** |
-| `xgboost_ordinal` (Phase 3) | 0.618 | **0.806** | 2.84% | ✓ | ✗ | **NO** |
-| `hybrid_xgboost_reg_xgboost_cls` (Phase 2) | **0.642** | 0.664 | **2.24%** | ✓ | ✓ | **YES** |
+| `logistic_regression` | 0.616 | 0.657 | 2.79% | ✓ | ✗ | **NO** |
+| `random_forest` | 0.634 | 0.577 | 2.12% | ✗ | ✓ | **NO** |
+| `xgboost` | **0.639** | 0.618 | 1.94% | ✗ | ✓ | **NO** |
+| `regression_to_class_xgboost` | 0.625 | 0.464 | 1.93% | ✗ | ✓ | **NO** |
+| `xgboost_ordinal` (Phase 3) | 0.619 | **0.803** | 2.97% | ✓ | ✗ | **NO** |
+| `hybrid_xgboost_reg_xgboost_cls` (Phase 2) | 0.636 | 0.680 | **2.32%** | ✓ | ✓ | **YES** |
 
 Only the hybrid strategy passes both hard constraints.
 
@@ -710,8 +710,8 @@ Only the hybrid strategy passes both hard constraints.
 
 Only the hybrid strategy successfully passes both hard constraints, making it the unique production-ready choice.
 
-- **`xgboost_ordinal`** maximises `recall_rosso` (0.806), which makes it the most conservative choice, but its `severe_error_rate` (2.84%) exceeds the maximum allowable budget of 2.5% (C2). This degradation is driven by severe false alarms: it predicts `rosso` on actual `giallo` days 226 times (vs 141 for the hybrid) and `arancio`/`rosso` on actual `verde` days 135 times (vs 59 for the hybrid). For a public agency, such severe over-predictions carry a high administrative and political cost (e.g., unjustified traffic restrictions) and risk eroding public trust (the "cry wolf" effect).
-- **`hybrid_xgboost_reg_xgboost_cls`** achieves a better overall balance with the highest `f1_macro` (0.642), a solid `recall_rosso` (0.664), and safely passes the C2 constraint with a `severe_error_rate` of 2.24% (limiting high-severity false alarms to 59 for green and 141 for yellow).
+- **`xgboost_ordinal`** maximises `recall_rosso` (0.803), which makes it the most conservative choice, but its `severe_error_rate` (2.97%) exceeds the maximum allowable budget of 2.5% (C2). This degradation is driven by severe false alarms: it predicts `rosso` on actual `giallo` days 234 times (vs 148 for the hybrid) and `arancio`/`rosso` on actual `verde` days 144 times (vs 63 for the hybrid). For a public agency, such severe over-predictions carry a high administrative and political cost (e.g., unjustified traffic restrictions) and risk eroding public trust (the "cry wolf" effect).
+- **`hybrid_xgboost_reg_xgboost_cls`** achieves the best overall balance: a strong `f1_macro` (0.636 — within 0.003 of the top base classifier, which itself fails C1), a solid `recall_rosso` (0.680), and safely passes the C2 constraint with a `severe_error_rate` of 2.32% (limiting high-severity false alarms to 63 for green and 148 for yellow).
 
 The API serves the hybrid strategy because it is the only model providing strong holistic performance while strictly respecting the public health and reliability guardrails. The ordinal model is also saved for potential high-sensitivity (but higher false-alarm) scenarios.
 
@@ -967,25 +967,25 @@ The system manages this tension through a five-layer defence:
 
 | Metric | Value |
 |---|---|
-| RMSE | 9.25 µg/m³ |
-| MAE | 6.24 µg/m³ |
-| R² | 0.695 |
-| RMSE on `rosso` class | 17.93 µg/m³ |
+| RMSE | 9.24 µg/m³ |
+| MAE | 6.26 µg/m³ |
+| R² | 0.696 |
+| RMSE on `rosso` class | 17.83 µg/m³ |
 
 ### 14.3 Classification (Best production-ready: Hybrid XGBoost)
 
 | Metric | Value |
 |---|---|
-| F1-macro | **0.642** (best overall) |
-| Recall rosso | 0.664 |
-| Severe error rate | 2.24% |
+| F1-macro | 0.636 (best production-ready) |
+| Recall rosso | 0.680 |
+| Severe error rate | 2.32% |
 | Production ready | **YES** |
 
 | Metric | `xgboost_ordinal` |
 |---|---|
-| F1-macro | 0.618 |
-| Recall rosso | **0.806** (best) |
-| Severe error rate | 2.84% |
+| F1-macro | 0.619 |
+| Recall rosso | **0.803** (best) |
+| Severe error rate | 2.97% |
 | Production ready | **NO** |
 
 ### 14.4 Clustering (Best: KMeans k=2)
