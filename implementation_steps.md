@@ -542,31 +542,31 @@ Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia s
 
 ### 9.1 Workflow CI (`test.yml`)
 
-- [ ] Crea `.github/workflows/test.yml`
-- [ ] Trigger: `push` su `master`/`main` + `pull_request`
-- [ ] Job `test`: `ubuntu-latest`, setup Python 3.11, `pip install -r requirements.txt`, `pytest tests/ -v`
+- [x] Crea `.github/workflows/test.yml`
+- [x] Trigger: `push` su `master`/`main` + `pull_request`
+- [x] Job `test`: `ubuntu-latest`, setup Python 3.11, `pip install -r requirements.txt`, `pytest tests/ -v`
 
 ### 9.2 Workflow Docker Publish (`docker-publish.yml`)
 
-- [ ] Crea `.github/workflows/docker-publish.yml`
-- [ ] Trigger: `push` su `master`/`main` + tag `v*.*.*`
-- [ ] Step: login GHCR con `GITHUB_TOKEN`
-- [ ] Step: build e push singola immagine FastAPI integrata -> `ghcr.io/${{ github.repository }}/pm10-forecast:latest`
-- [ ] Collega il package GHCR al repository GitHub dalla pagina del package
+- [x] Crea `.github/workflows/docker-publish.yml`
+- [x] Trigger: `push` su `master`/`main` + tag `v*.*.*`
+- [x] Step: login GHCR con `GITHUB_TOKEN`
+- [x] Step: build e push singola immagine FastAPI integrata -> `ghcr.io/${{ github.repository }}/pm10-forecast:latest`
+- [ ] Collega il package GHCR al repository GitHub dalla pagina del package *(azione manuale una-tantum sulla pagina GitHub del package, da fare dopo il primo push che pubblica l'immagine)*
 
 ### 9.3 Test suite di base (`tests/`)
 
-- [ ] Crea `tests/__init__.py`
-- [ ] Test unit: `temporal_train_test_split` — verifica che nessun giorno sia in train e test contemporaneamente
-- [ ] Test unit: `make_temporal_cv_splits` — verifica 5 fold, nessun overlap intra-fold
-- [ ] Test unit: `impute_missing` — verifica che le mediane del test set NON vengano calcolate sui dati test
-- [ ] Test integration: `GET /health` → 200 `{"status": "ok"}`
-- [ ] Test integration: `GET /stations` → lista con campi `idstazione`, `lat`, `lon` presenti
+- [x] Crea `tests/__init__.py`
+- [x] Test unit: `temporal_train_test_split` — verifica che nessun giorno sia in train e test contemporaneamente
+- [x] Test unit: `make_temporal_cv_splits` — verifica 5 fold, nessun overlap intra-fold
+- [x] Test unit: `impute_missing` — verifica che le mediane del test set NON vengano calcolate sui dati test
+- [x] Test integration: `GET /health` → 200 `{"status": "ok"}`
+- [x] Test integration: `GET /stations` → lista con campi `idstazione`, `lat`, `lon` presenti
 
 ### 9.4 Verifica
 
-- [ ] `pytest tests/ -v` passa localmente senza errori
-- [ ] Pipeline CI verde su GitHub dopo push
+- [x] `pytest tests/ -v` passa localmente senza errori *(62 test, 0 errori)*
+- [ ] Pipeline CI verde su GitHub dopo push *(verificabile solo dopo il primo push del branch — controllare la tab Actions)*
 
 ---
 
