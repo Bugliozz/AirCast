@@ -31,7 +31,9 @@ step_6_clustering/artifacts/plots/
 step_6_clustering/artifacts/cluster_map.html
 
 # Data (large, stored on GCS)
-data/
+data/*
+!data/raw/
+data/raw/*
 air_quality_data/
 *.json
 *.csv
@@ -39,6 +41,8 @@ air_quality_data/
 # Clustering artifacts needed by the API (small, committed for Cloud Run deploy)
 !artifacts/station_clusters.csv
 !artifacts/cluster_interpretation.json
+# Sensor registry required by Dockerfile (public ARPA metadata, ~700KB)
+!data/raw/sensors_registry.json
 
 # Secrets & env
 .env
