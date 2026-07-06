@@ -572,32 +572,32 @@ Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia s
 
 ## Step 10 — `summary.ipynb`
 
-- [ ] Crea `summary.ipynb` alla root del progetto
-- [ ] **Sezione 1 — Introduzione**: cella markdown con obiettivo, dataset usati, pipeline diagram (ASCII da `technical_doc.md` sezione 2)
-- [ ] **Sezione 2 — Raccolta Dati**: cella codice con esempio fetch ARPA + Open-Meteo, preview JSON risultante
-- [ ] **Sezione 3 — Feature Engineering**: tabelle feature principali (temporali, lag/rolling, meteo derivate, spaziali) + motivazioni encoding ciclico
-- [ ] **Sezione 4 — EDA**: carica `daily_dataset.parquet`, mostra i 13 plot da `step_3_eda/plots/` con `IPython.display`
-- [ ] **Sezione 5 — Regressione PM10**: carica `step_4_regression/artifacts/regression_metrics.json`, tabella comparativa R²/RMSE/MAE, feature importance XGBoost
-- [ ] **Sezione 6 — Classificazione Allerta**: carica `step_5_classification/artifacts/classification_metrics.json`, tabella F1-macro per modello, confusion matrix best model
-- [ ] **Sezione 7 — Demo previsione**: chiama `GET /forecast?station_id=501&days=1` via `requests`, mostra output JSON formattato
-- [ ] **Sezione 8 — Conclusioni**: tabella limiti del modello (catturabili vs non catturabili), possibili miglioramenti futuri
-- [ ] Verifica: notebook eseguibile da cima a fondo senza errori (`Run All`) con API attiva per la sezione demo
+- [x] Crea `summary.ipynb` alla root del progetto
+- [x] **Sezione 1 — Introduzione**: cella markdown con obiettivo, dataset usati, pipeline diagram (ASCII da `technical_report.md` sezione 3.1)
+- [x] **Sezione 2 — Raccolta Dati**: cella codice con esempio fetch ARPA + Open-Meteo, preview JSON risultante
+- [x] **Sezione 3 — Feature Engineering**: tabelle feature principali (temporali, lag/rolling, meteo derivate, spaziali) + motivazioni encoding ciclico
+- [x] **Sezione 4 — EDA**: carica `daily_dataset_clean.parquet`, mostra i 16 plot da `step_3_eda/plots/` (13 EDA core + 3 diagnostico RMT) con `IPython.display`
+- [x] **Sezione 5 — Regressione PM10**: carica `step_4_regression/artifacts/regression_metrics.json`, tabella comparativa R²/RMSE/MAE + plot diagnostici per modello e feature importance (ElasticNet nativa, RF/XGBoost permutation)
+- [x] **Sezione 6 — Classificazione Allerta**: carica `step_5_classification/artifacts/classification_metrics.json`, tabella F1-macro per strategia, confusion matrix di tutte le 7 strategie, permutation importance dei classificatori base + ordinale, reliability diagram della calibrazione *(strategia finale ibrida da `final_model_selection.json`)*
+- [x] **Sezione 7 — Demo previsione**: chiama `GET /forecast?station_id=501&days=1` via `requests`, mostra output JSON formattato *(con fallback automatico alla prima stazione con dati freschi se la 501 viene respinta dal guardrail `valid_days_last_7 < 3`)*
+- [x] **Sezione 8 — Conclusioni**: tabella limiti del modello (catturabili vs non catturabili), possibili miglioramenti futuri
+- [x] Verifica: notebook eseguibile da cima a fondo senza errori (`Run All`) con API attiva per la sezione demo *(notebook in inglese; eseguito 2026-07-06 via `nbconvert --execute`: 22 celle, 0 errori, 34 immagini; demo servita da Sondrio v.Paribelli per fallback — la 501 aveva solo 2 giorni validi negli ultimi 7)*
 
 ---
 
 ## Step 11 — `README.md`
 
-- [ ] Crea `README.md` alla root del progetto
-- [ ] **Titolo + descrizione** (2–3 righe): cosa fa, quali dati usa, cosa predice
-- [ ] **Project Structure**: albero directory semplificato (solo livello 1–2)
-- [ ] **Pipeline Overview**: diagramma ASCII da `technical_doc.md` sezione 2
-- [ ] **Quick Start — Prerequisites**: Docker & Docker Compose, Python 3.11+
-- [ ] **Quick Start — Run with Docker**: `docker compose up --build`, URL API (`http://localhost:8000/docs`) e webapp (`http://localhost:8501`)
-- [ ] **Quick Start — Run locally**: comandi step-by-step (MySQL → ingest → build_dataset → train regression → train classification → API → webapp)
-- [ ] **API Reference**: tabella endpoint principali (metodo, path, descrizione) + link a `/docs`
-- [ ] **Data Sources**: ARPA Lombardia, Open-Meteo, OpenStreetMap
-- [ ] **Models**: tabella breve (modello, task, metrica primaria, score ottenuto dal test set)
-- [ ] **License**: sezione con licenza del progetto
+- [x] Crea `README.md` alla root del progetto
+- [x] **Titolo + descrizione** (2–3 righe): cosa fa, quali dati usa, cosa predice
+- [x] **Project Structure**: albero directory semplificato (solo livello 1–2)
+- [x] **Pipeline Overview**: diagramma ASCII (data flow da `technical_report.md` §3.1)
+- [x] **Quick Start — Prerequisites**: Docker, Python 3.11+
+- [x] **Quick Start — Run with Docker**: `docker build`/`docker run` sull'immagine unica FastAPI (backend+frontend integrati, porta 8080) — *nota: nessun `docker compose up` in produzione e nessuna webapp separata su :8501: dopo lo Step 7 il frontend Jinja2 è servito dalla stessa app FastAPI; `compose.yaml` resta solo per MySQL/training locale, coerente con lo Step 8.4*
+- [x] **Quick Start — Run locally**: comandi step-by-step (MySQL → ingest → eda/build_dataset → train+evaluate regression → train+evaluate+calibrate classification → clustering opzionale → API su `uvicorn`, porta 8000)
+- [x] **API Reference**: tabella endpoint principali (metodo, path, descrizione) + link a `/docs`
+- [x] **Data Sources**: ARPA Lombardia, Open-Meteo, OpenStreetMap
+- [x] **Models**: tabella breve (modello, task, metrica primaria, score ottenuto dal test set) — dati presi da `regression_metrics.json`, `final_model_selection.json`, `clustering_metrics.json`
+- [x] **License**: nessuna licenza open-source (all rights reserved) — scelta confermata dall'utente
 
 ---
 
