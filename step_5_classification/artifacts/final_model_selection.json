@@ -1,0 +1,84 @@
+{
+  "production_ready": true,
+  "selected_strategy": {
+    "strategy_name": "hybrid_xgboost_reg_xgboost_cls",
+    "f1_macro": 0.6355066636473969,
+    "severe_error_rate": 0.023247232472324724,
+    "recall_rosso": 0.68,
+    "precision_rosso": 0.596368138671069,
+    "over_alert_rate": 0.17189421894218943,
+    "rmse_rosso": 17.82826689936032
+  },
+  "selection_reason": "Only strategy, or best by f1_macro within +/-0.005, that satisfies severe_error_rate <= 2.5% and recall_rosso >= 0.65.",
+  "best_research_candidate": null,
+  "constraints": {
+    "c1_severe_error_rate_max": 0.025,
+    "c2_recall_rosso_min": 0.65,
+    "tie_f1_threshold": 0.005,
+    "c1_description": "severe_error_rate <= 2.5%",
+    "c2_description": "recall_rosso >= 0.65"
+  },
+  "constraint_summary_per_strategy": {
+    "classifier_logistic_regression": {
+      "c1_severe_error_rate": false,
+      "c2_recall_rosso": true,
+      "passes_both": false,
+      "severe_error_rate": 0.02785977859778598,
+      "recall_rosso": 0.6574117647058824,
+      "f1_macro": 0.6158057755665536
+    },
+    "classifier_random_forest": {
+      "c1_severe_error_rate": true,
+      "c2_recall_rosso": false,
+      "passes_both": false,
+      "severe_error_rate": 0.021156211562115623,
+      "recall_rosso": 0.5764705882352941,
+      "f1_macro": 0.6341838060868495
+    },
+    "classifier_xgboost": {
+      "c1_severe_error_rate": true,
+      "c2_recall_rosso": false,
+      "passes_both": false,
+      "severe_error_rate": 0.01943419434194342,
+      "recall_rosso": 0.6183529411764705,
+      "f1_macro": 0.6393907092237735
+    },
+    "regression_to_class_xgboost": {
+      "c1_severe_error_rate": true,
+      "c2_recall_rosso": false,
+      "passes_both": false,
+      "severe_error_rate": 0.019311193111931118,
+      "recall_rosso": 0.464,
+      "f1_macro": 0.624974067973743
+    },
+    "xgboost_ordinal": {
+      "c1_severe_error_rate": false,
+      "c2_recall_rosso": true,
+      "passes_both": false,
+      "severe_error_rate": 0.02970479704797048,
+      "recall_rosso": 0.8032941176470588,
+      "f1_macro": 0.6193724859361396
+    },
+    "classifier_xgboost_calibrated": {
+      "c1_severe_error_rate": false,
+      "c2_recall_rosso": true,
+      "passes_both": false,
+      "severe_error_rate": 0.03019680196801968,
+      "recall_rosso": 0.6668235294117647,
+      "f1_macro": 0.6034738915569918
+    },
+    "hybrid_xgboost_reg_xgboost_cls": {
+      "c1_severe_error_rate": true,
+      "c2_recall_rosso": true,
+      "passes_both": true,
+      "severe_error_rate": 0.023247232472324724,
+      "recall_rosso": 0.68,
+      "f1_macro": 0.6355066636473969
+    }
+  },
+  "n_strategies_evaluated": 7,
+  "n_strategies_passing_c1": 4,
+  "n_strategies_passing_both": 1,
+  "generated_at": "2026-07-06T13:54:00Z",
+  "source_artifact": "step_5_classification\\artifacts\\classification_metrics.json"
+}

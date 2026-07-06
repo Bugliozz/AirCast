@@ -1,0 +1,24 @@
+[
+  {
+    "cluster":0,
+    "pm10_mean":28.6901,
+    "pct_critical_days":0.2945,
+    "seasonality_ratio":2.0048,
+    "stagnation_index_mean":0.0121,
+    "dist_industrial_km":0.5988,
+    "no2_mean":23.2132,
+    "quota":126.0179,
+    "wind_speed_mean":6.4153
+  },
+  {
+    "cluster":1,
+    "pm10_mean":19.3383,
+    "pct_critical_days":0.1279,
+    "seasonality_ratio":1.7572,
+    "stagnation_index_mean":0.0168,
+    "dist_industrial_km":0.8104,
+    "no2_mean":17.5197,
+    "quota":456.0,
+    "wind_speed_mean":4.8794
+  }
+]

@@ -1,0 +1,249 @@
+{
+  "n_stations": 67,
+  "best_model": {
+    "algo": "kmeans",
+    "k": 2,
+    "silhouette": 0.46741755747397606
+  },
+  "kmeans": {
+    "2": {
+      "inertia": 361.9483310500792,
+      "silhouette": 0.46741755747397606,
+      "calinski_harabasz": 33.39283729468831,
+      "davies_bouldin": 1.1341976231204096,
+      "cluster_sizes": [
+        56,
+        11
+      ],
+      "interpretable": true
+    },
+    "3": {
+      "inertia": 246.79303857182944,
+      "silhouette": 0.3575176628227238,
+      "calinski_harabasz": 39.04177096166872,
+      "davies_bouldin": 0.9938879377401042,
+      "cluster_sizes": [
+        15,
+        2,
+        50
+      ],
+      "interpretable": false
+    },
+    "4": {
+      "inertia": 202.03481993510093,
+      "silhouette": 0.24643801854960332,
+      "calinski_harabasz": 35.9494816943109,
+      "davies_bouldin": 1.217348204470882,
+      "cluster_sizes": [
+        30,
+        9,
+        26,
+        2
+      ],
+      "interpretable": false
+    },
+    "5": {
+      "inertia": 175.90869565279397,
+      "silhouette": 0.25354151825527893,
+      "calinski_harabasz": 32.777091289711755,
+      "davies_bouldin": 1.1571595192270616,
+      "cluster_sizes": [
+        15,
+        31,
+        12,
+        2,
+        7
+      ],
+      "interpretable": false
+    },
+    "6": {
+      "inertia": 151.44997230518604,
+      "silhouette": 0.27125249613850017,
+      "calinski_harabasz": 31.93542759004614,
+      "davies_bouldin": 1.0459881886019564,
+      "cluster_sizes": [
+        12,
+        29,
+        13,
+        2,
+        6,
+        5
+      ],
+      "interpretable": false
+    },
+    "7": {
+      "inertia": 135.2434423042337,
+      "silhouette": 0.26060962419494815,
+      "calinski_harabasz": 30.511702042718305,
+      "davies_bouldin": 0.8761197204572021,
+      "cluster_sizes": [
+        12,
+        29,
+        13,
+        1,
+        6,
+        5,
+        1
+      ],
+      "interpretable": false
+    },
+    "8": {
+      "inertia": 122.17603666539262,
+      "silhouette": 0.2457706151469837,
+      "calinski_harabasz": 29.369065145272533,
+      "davies_bouldin": 0.8673797895262685,
+      "cluster_sizes": [
+        16,
+        25,
+        1,
+        2,
+        12,
+        1,
+        5,
+        5
+      ],
+      "interpretable": false
+    }
+  },
+  "agglomerative": {
+    "2": {
+      "silhouette": 0.6943548750654364,
+      "calinski_harabasz": 33.20480231566858,
+      "davies_bouldin": 0.5072029006338898,
+      "cluster_sizes": [
+        65,
+        2
+      ],
+      "interpretable": false
+    },
+    "3": {
+      "silhouette": 0.3261644264196466,
+      "calinski_harabasz": 35.44566739590365,
+      "davies_bouldin": 1.0014497229722028,
+      "cluster_sizes": [
+        52,
+        2,
+        13
+      ],
+      "interpretable": false
+    },
+    "4": {
+      "silhouette": 0.23304026640326814,
+      "calinski_harabasz": 32.17217122537638,
+      "davies_bouldin": 1.3106452822611339,
+      "cluster_sizes": [
+        18,
+        34,
+        13,
+        2
+      ],
+      "interpretable": false
+    },
+    "5": {
+      "silhouette": 0.24211616430263852,
+      "calinski_harabasz": 30.00055311109616,
+      "davies_bouldin": 1.0996592079518663,
+      "cluster_sizes": [
+        13,
+        34,
+        7,
+        2,
+        11
+      ],
+      "interpretable": false
+    },
+    "6": {
+      "silhouette": 0.23572841238991107,
+      "calinski_harabasz": 28.135044343412243,
+      "davies_bouldin": 1.1207685034499988,
+      "cluster_sizes": [
+        34,
+        2,
+        7,
+        6,
+        11,
+        7
+      ],
+      "interpretable": false
+    },
+    "7": {
+      "silhouette": 0.19495566081262602,
+      "calinski_harabasz": 27.53386705903993,
+      "davies_bouldin": 1.217883517407408,
+      "cluster_sizes": [
+        2,
+        6,
+        15,
+        19,
+        11,
+        7,
+        7
+      ],
+      "interpretable": false
+    },
+    "8": {
+      "silhouette": 0.1848157208317673,
+      "calinski_harabasz": 27.158087696716184,
+      "davies_bouldin": 1.0498248335646705,
+      "cluster_sizes": [
+        6,
+        19,
+        15,
+        1,
+        11,
+        7,
+        7,
+        1
+      ],
+      "interpretable": false
+    }
+  },
+  "dbscan": {
+    "0.5": {
+      "silhouette": -2.0,
+      "n_clusters": 0,
+      "n_noise": 67
+    },
+    "0.75": {
+      "silhouette": 0.4074102564615742,
+      "n_clusters": 3,
+      "n_noise": 55
+    },
+    "1.0": {
+      "silhouette": 0.3176760437317251,
+      "n_clusters": 4,
+      "n_noise": 42
+    },
+    "1.25": {
+      "silhouette": -2.0,
+      "n_clusters": 1,
+      "n_noise": 27
+    },
+    "1.5": {
+      "silhouette": 0.29065221613218595,
+      "n_clusters": 2,
+      "n_noise": 19
+    }
+  },
+  "external_validation": {
+    "adjusted_rand_score": 0.03789915415382598,
+    "homogeneity": 0.11883224560738746,
+    "completeness": 0.6444823522586027,
+    "v_measure": 0.2006650610045496
+  },
+  "severity_separation": {
+    "pm10_mean": {
+      "kruskal_wallis_stat": 24.259262796027457,
+      "p_value": 8.42011740768098e-07
+    },
+    "pct_critical_days": {
+      "kruskal_wallis_stat": 26.127960275019063,
+      "p_value": 3.1952343558671644e-07
+    }
+  },
+  "circularity_caveat": {
+    "non_independent": true,
+    "note": "The alert class is derived from PM10 thresholds — the same signal that drives pm10_mean in the feature set.  This metric is reported for completeness only and must NOT be used as evidence of validity.",
+    "homogeneity_vs_dominant_classe_allerta": 0.028842527226261103
+  }
+}

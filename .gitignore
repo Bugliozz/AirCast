@@ -16,6 +16,8 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+# ...except the exam deliverable notebook, which MUST be tracked
+!summary.ipynb
 
 # ML artifacts
 step_4_regression/artifacts/*.pkl
@@ -44,6 +46,18 @@ air_quality_data/
 # Sensor registry required by Dockerfile (public ARPA metadata, ~700KB)
 !data/raw/sensors_registry.json
 
+# Serving artifacts the API/Dockerfile need to actually run (small).
+# Big comparison models (Random Forest 79MB+239MB, train/test data) stay ignored —
+# their scores are preserved in the metrics JSON below, and the 239MB RF exceeds
+# GitHub's 100MB per-file limit anyway.
+!step_4_regression/artifacts/best_model.joblib
+!step_5_classification/artifacts/xgboost_hybrid_calibrated.joblib
+!step_3_eda/daily_dataset_clean.parquet
+# Metrics JSON used by summary.ipynb and the README results tables (all tiny)
+!step_4_regression/artifacts/*.json
+!step_5_classification/artifacts/*.json
+!step_6_clustering/artifacts/*.json
+
 # Secrets & env
 .env
 *.env
@@ -63,3 +77,6 @@ Slide/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Internal planning checklist — kept local only (not an exam deliverable)
+implementation_steps.md

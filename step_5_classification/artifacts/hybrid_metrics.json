@@ -1,0 +1,324 @@
+{
+  "generated_at": "2026-06-28T20:14:24Z",
+  "params_path": "step_5_classification/artifacts/hybrid_params.json",
+  "hybrid_params": {
+    "delta": 7.0,
+    "p_threshold": 0.25,
+    "oof_score": 0.4448155785365021,
+    "grid_is_flat": false
+  },
+  "models": {
+    "regression_to_class_xgboost": {
+      "strategy_name": "regression_to_class_xgboost",
+      "accuracy": 0.6540590405904059,
+      "f1_macro": 0.624974067973743,
+      "per_class": {
+        "verde": {
+          "precision": 0.7510673234811166,
+          "recall": 0.8234023402340234,
+          "f1": 0.7855732073851438,
+          "support": 5555
+        },
+        "giallo": {
+          "precision": 0.6098092643051771,
+          "recall": 0.6165289256198347,
+          "f1": 0.6131506849315068,
+          "support": 5445
+        },
+        "arancio": {
+          "precision": 0.5163811241358581,
+          "recall": 0.5480063795853269,
+          "f1": 0.5317239244815847,
+          "support": 3135
+        },
+        "rosso": {
+          "precision": 0.7369207772795217,
+          "recall": 0.464,
+          "f1": 0.5694484550967369,
+          "support": 2125
+        }
+      },
+      "precision_rosso": 0.7369207772795217,
+      "recall_rosso": 0.464,
+      "severe_error_rate": 0.019311193111931118,
+      "over_alert_rate": 0.11937269372693728,
+      "under_alert_rate": 0.22656826568265684,
+      "confusion_matrix": [
+        [
+          4574,
+          938,
+          41,
+          2
+        ],
+        [
+          1446,
+          3357,
+          610,
+          32
+        ],
+        [
+          58,
+          1041,
+          1718,
+          318
+        ],
+        [
+          12,
+          169,
+          958,
+          986
+        ]
+      ]
+    },
+    "classifier_xgboost_calibrated": {
+      "strategy_name": "classifier_xgboost_calibrated",
+      "accuracy": 0.6390528905289052,
+      "f1_macro": 0.6034738915569918,
+      "per_class": {
+        "verde": {
+          "precision": 0.741072884395891,
+          "recall": 0.8181818181818182,
+          "f1": 0.7777207392197125,
+          "support": 5555
+        },
+        "giallo": {
+          "precision": 0.5869490358126722,
+          "recall": 0.626078971533517,
+          "f1": 0.6058828756775971,
+          "support": 5445
+        },
+        "arancio": {
+          "precision": 0.5298701298701298,
+          "recall": 0.3253588516746411,
+          "f1": 0.4031620553359684,
+          "support": 3135
+        },
+        "rosso": {
+          "precision": 0.5918964076858814,
+          "recall": 0.6668235294117647,
+          "f1": 0.627129895994689,
+          "support": 2125
+        }
+      },
+      "precision_rosso": 0.5918964076858814,
+      "recall_rosso": 0.6668235294117647,
+      "severe_error_rate": 0.03019680196801968,
+      "over_alert_rate": 0.14403444034440344,
+      "under_alert_rate": 0.21691266912669127,
+      "confusion_matrix": [
+        [
+          4545,
+          959,
+          31,
+          20
+        ],
+        [
+          1503,
+          3409,
+          375,
+          158
+        ],
+        [
+          73,
+          1243,
+          1020,
+          799
+        ],
+        [
+          12,
+          197,
+          499,
+          1417
+        ]
+      ]
+    },
+    "hybrid_xgboost_reg_xgboost_cls": {
+      "strategy_name": "hybrid_xgboost_reg_xgboost_cls",
+      "accuracy": 0.6600861008610086,
+      "f1_macro": 0.6355066636473969,
+      "per_class": {
+        "verde": {
+          "precision": 0.7890440776346817,
+          "recall": 0.783078307830783,
+          "f1": 0.7860498735092157,
+          "support": 5555
+        },
+        "giallo": {
+          "precision": 0.6204903677758319,
+          "recall": 0.6506887052341598,
+          "f1": 0.6352308381891528,
+          "support": 5445
+        },
+        "arancio": {
+          "precision": 0.5336648814078041,
+          "recall": 0.4449760765550239,
+          "f1": 0.48530179161593323,
+          "support": 3135
+        },
+        "rosso": {
+          "precision": 0.596368138671069,
+          "recall": 0.68,
+          "f1": 0.6354441512752859,
+          "support": 2125
+        }
+      },
+      "precision_rosso": 0.596368138671069,
+      "recall_rosso": 0.68,
+      "severe_error_rate": 0.023247232472324724,
+      "over_alert_rate": 0.17189421894218943,
+      "under_alert_rate": 0.16801968019680197,
+      "confusion_matrix": [
+        [
+          4350,
+          1142,
+          43,
+          20
+        ],
+        [
+          1122,
+          3543,
+          632,
+          148
+        ],
+        [
+          31,
+          899,
+          1395,
+          810
+        ],
+        [
+          10,
+          126,
+          544,
+          1445
+        ]
+      ],
+      "hybrid_override_rate": 0.12121771217712177,
+      "hybrid_escalation_rate": 0.12121771217712177,
+      "n_overrides": 1971,
+      "n_escalations": 1971,
+      "delta": 7.0,
+      "p_threshold": 0.25,
+      "regressor_name": "xgboost",
+      "classifier_name": "xgboost",
+      "regression_artifact": "step_4_regression/artifacts/best_model.joblib",
+      "calibrated_classifier_artifact": "step_5_classification/artifacts/xgboost_hybrid_calibrated.joblib",
+      "threshold_zone_rate": 0.8031980319803198,
+      "discordance_rate": 0.21648216482164823,
+      "prudential_activation_rate": 0.2013530135301353,
+      "rmse_rosso": 17.82826689936032
+    },
+    "xgboost": {
+      "strategy_name": "classifier_xgboost_calibrated",
+      "accuracy": 0.651230012300123,
+      "f1_macro": 0.6408447852270818,
+      "per_class": {
+        "verde": {
+          "precision": 0.821486268174475,
+          "recall": 0.7323132313231323,
+          "f1": 0.7743409155800894,
+          "support": 5555
+        },
+        "giallo": {
+          "precision": 0.6196249289638189,
+          "recall": 0.6007346189164371,
+          "f1": 0.6100335695635957,
+          "support": 5445
+        },
+        "arancio": {
+          "precision": 0.47918224881575666,
+          "recall": 0.6130781499202552,
+          "f1": 0.5379233137419536,
+          "support": 3135
+        },
+        "rosso": {
+          "precision": 0.6580773042616452,
+          "recall": 0.6249411764705882,
+          "f1": 0.6410813420226888,
+          "support": 2125
+        }
+      },
+      "precision_rosso": 0.6580773042616452,
+      "recall_rosso": 0.6249411764705882,
+      "severe_error_rate": 0.01955719557195572,
+      "over_alert_rate": 0.2094710947109471,
+      "under_alert_rate": 0.1392988929889299,
+      "confusion_matrix": [
+        [
+          4068,
+          1354,
+          125,
+          8
+        ],
+        [
+          849,
+          3271,
+          1237,
+          88
+        ],
+        [
+          27,
+          592,
+          1922,
+          594
+        ],
+        [
+          8,
+          62,
+          727,
+          1328
+        ]
+      ],
+      "calibrated_artifact": "step_5_classification/artifacts/xgboost_hybrid_calibrated.joblib",
+      "reliability_diagram": "step_5_classification/artifacts/plots/xgboost_hybrid_reliability_diagram_before_after.png",
+      "ece_per_class": {
+        "verde": 0.046561039564046974,
+        "giallo": 0.03270354363375091,
+        "arancio": 0.028688119349968046,
+        "rosso": 0.008334036509784057
+      },
+      "expected_calibration_error": {
+        "n_bins": 10,
+        "per_class": {
+          "verde": {
+            "before": 0.036859220529461105,
+            "after": 0.046561039564046974
+          },
+          "giallo": {
+            "before": 0.044015350323419584,
+            "after": 0.03270354363375091
+          },
+          "arancio": {
+            "before": 0.05008085958005122,
+            "after": 0.028688119349968046
+          },
+          "rosso": {
+            "before": 0.009503358974932909,
+            "after": 0.008334036509784057
+          }
+        }
+      }
+    }
+  },
+  "tradeoff": {
+    "hybrid_vs_regression_to_class": {
+      "delta_recall_rosso": 0.21600000000000003,
+      "delta_over_alert_rate": 0.05252152521525215,
+      "delta_severe_error_rate": 0.003936039360393606,
+      "delta_f1_macro": 0.010532595673653944
+    },
+    "hybrid_vs_classifier_calibrated": {
+      "delta_recall_rosso": 0.013176470588235345,
+      "delta_over_alert_rate": 0.02785977859778599,
+      "delta_severe_error_rate": -0.0069495694956949565,
+      "delta_f1_macro": 0.032032772090405115
+    },
+    "hybrid_vs_classifier_uncalibrated": {
+      "delta_recall_rosso": 0.05505882352941183,
+      "delta_over_alert_rate": -0.03757687576875768,
+      "delta_severe_error_rate": 0.0036900369003690058,
+      "delta_f1_macro": -0.005338121579684829
+    }
+  },
+  "test_set_note": "OOF cache is used only for tuning; these metrics use the held-out test set."
+}

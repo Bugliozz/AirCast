@@ -1,0 +1,18 @@
+{
+  "train_date_range": [
+    "2024-01-01 00:00:00",
+    "2025-08-22 00:00:00"
+  ],
+  "test_date_range": [
+    "2025-08-23 00:00:00",
+    "2026-05-07 00:00:00"
+  ],
+  "n_train_samples": 38335,
+  "n_test_samples": 16260,
+  "n_stations_train": 67,
+  "n_stations_test": 67,
+  "n_stations_intersection": 67,
+  "train_index_hash": "43cf2662355821a8115c5b5316189c0ad9711116019dd97f7bccd7167b6839e7",
+  "test_index_hash": "f5ae5cb33ddca97e1e333a1c3e4e51cef8c5e6a8b76ca5e42c4211280151761e",
+  "split_index_hash": "7fb4520b5432a12b5fc8f4721e790d78be3240af680c7220bb8d6b9861a3ed47"
+}
