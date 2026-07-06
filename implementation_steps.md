@@ -566,7 +566,7 @@ Obiettivo: chi usa la web app capisce a colpo d'occhio se la previsione poggia s
 ### 9.4 Verifica
 
 - [x] `pytest tests/ -v` passa localmente senza errori *(62 test, 0 errori)*
-- [ ] Pipeline CI verde su GitHub dopo push *(verificabile solo dopo il primo push del branch — controllare la tab Actions)*
+- [x] Pipeline CI verde su GitHub dopo push *(run 28798897964 "Test" e 28798897890 "Docker Publish" entrambe success su master; il primo tentativo Docker Publish era fallito per un file gitignorato, vedi fix in `fix(docker): commit sensors_registry.json required by Dockerfile`)*
 
 ---
 
