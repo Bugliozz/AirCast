@@ -3,7 +3,9 @@
 [![Tests](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/test.yml/badge.svg)](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/test.yml)
 [![Docker Publish](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/docker-publish.yml)
 
-AirPulita is an end-to-end data science pipeline that forecasts next-day PM10 concentration and 4-class air-quality alert (`verde`/`giallo`/`arancio`/`rosso`) for the 67 ARPA monitoring stations in Lombardy, Italy. It combines ARPA Lombardia air-quality measurements, Open-Meteo hourly weather and OpenStreetMap industrial-zone proximity (2024-01-01 → 2026-05-07, ~54.6k station-days) to train regression, classification and clustering models, and serves the results through a FastAPI backend with an integrated Jinja2 web UI, containerised and deployed on Google Cloud Run.
+AirPulita is an end-to-end data science pipeline that forecasts **next-day PM10** air pollution for the **67 ARPA monitoring stations** of Lombardy, Italy, and turns every forecast into a 4-class public-health alert (`verde` / `giallo` / `arancio` / `rosso`). It ingests three heterogeneous public sources — ARPA Lombardia air-quality measurements, Open-Meteo hourly weather, and OpenStreetMap industrial-zone proximity — covering 2024-01-01 → 2026-05-07 (~54.6k station-days), and engineers temporal, lag/rolling, meteorological and spatial features from them. On top of this feature store it trains and **compares three families of models**: regression (ElasticNet, Random Forest, XGBoost) for the PM10 value, classification (logistic regression, tree ensembles, an ordinal and a hybrid strategy) for the alert class, and clustering (KMeans, Agglomerative, DBSCAN) to profile the stations. Every model is validated on a strict **temporal** train/test split, never on random rows, so the reported scores reflect real next-day forecasting. The selected models are served through a single **FastAPI** backend that exposes both a REST API and an integrated **Jinja2** web UI (interactive Lombardy map, per-station forecast, history and clustering pages), containerised with Docker and deployed on **Google Cloud Run**.
+
+**Live demo:** https://pm10-forecast-47880508774.europe-west1.run.app/ — interactive Lombardy map and Swagger docs at [`/docs`](https://pm10-forecast-47880508774.europe-west1.run.app/docs). The service scales to zero, so the first request may take ~30 s to warm up.
 
 ---
 
@@ -83,6 +85,8 @@ DataScience_ExamProject/
 - (optional) A GCP service account with `roles/storage.objectViewer` on the GCS bucket, to enable the live "last 7 days" data window used at inference time
 
 ### Run with Docker (serving only)
+
+> The containerised API is defined by the root `Dockerfile` (there is no separate `API_App/` folder): the application is the `api/` FastAPI package plus the pipeline packages it imports (`shared/`, `step_3_eda`, `step_4_regression`, `step_5_classification`) — reused rather than duplicated.
 
 The image bakes in the pre-trained model artifacts and the cleaned parquet, so it serves forecasts without needing MySQL:
 
@@ -171,6 +175,20 @@ Full interactive documentation (request/response schemas) is available at `/docs
 | Clustering — 67 stations | KMeans (k=2) | Silhouette | 0.467 |
 
 The classification model is selected under hard production constraints (`severe_error_rate ≤ 2.5%`, `recall_rosso ≥ 0.65`) evaluated across 7 candidate strategies — see `step_5_classification/artifacts/final_model_selection.json` and `technical_report.md` for the full comparison.
+
+---
+
+## Results
+
+All models are evaluated on a **temporal hold-out split** — trained on 2024-01-01 → 2025-08-22 and tested on the following 2025-08-23 → 2026-05-07 window (16,260 station-days) — so the figures below measure genuine next-day forecasting, not interpolation of random rows.
+
+**Regression.** XGBoost is the best regressor, reaching **R² 0.696, RMSE 9.24 µg/m³ and MAE 6.26 µg/m³**. The ElasticNet linear baseline collapses to R² 0.018 (barely better than predicting the mean), which confirms that PM10 is driven by non-linear interactions between meteorology, seasonality and station context that only gradient-boosted trees capture.
+
+**Classification.** The 4-class alert comes from a hybrid strategy (XGBoost regressor → XGBoost classifier) selected **not by raw accuracy but under two operational constraints**: severe (2-class-off) error rate ≤ 2.5% and recall on the critical `rosso` class ≥ 0.65. Of the seven candidate strategies it was the *only* one satisfying both, scoring **F1-macro 0.636, severe-error-rate 2.3%, recall_rosso 0.68** and a 17.2% over-alert rate — a deliberate bias towards over-warning rather than missing a dangerous day.
+
+**Clustering.** KMeans with k=2 (silhouette 0.467) is the only interpretable solution, splitting the 67 stations into a large background group (56) and a small high-load group (11).
+
+**Limitations.** About 30% of PM10 variance stays unexplained, extreme `rosso` peaks remain the hardest cases (largest per-class RMSE), and roughly one red day in three is still under-alerted — adequate for an advisory tool, not for regulatory decisions.
 
 ---
 
