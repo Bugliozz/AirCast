@@ -1,9 +1,9 @@
-# AirPulita — PM10 Forecasting for Lombardy
+# AirCast — PM10 Forecasting for Lombardy
 
 [![Tests](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/test.yml/badge.svg)](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/test.yml)
 [![Docker Publish](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Bugliozz/Data-Science-Exam-Project/actions/workflows/docker-publish.yml)
 
-AirPulita is an end-to-end data science pipeline that forecasts **next-day PM10** air pollution for the **67 ARPA monitoring stations** of Lombardy, Italy, and turns every forecast into a 4-class public-health alert (`verde` / `giallo` / `arancio` / `rosso`). It ingests three heterogeneous public sources — ARPA Lombardia air-quality measurements, Open-Meteo hourly weather, and OpenStreetMap industrial-zone proximity — covering 2024-01-01 → 2026-05-07 (~54.6k station-days), and engineers temporal, lag/rolling, meteorological and spatial features from them. On top of this feature store it trains and **compares three families of models**: regression (ElasticNet, Random Forest, XGBoost) for the PM10 value, classification (logistic regression, tree ensembles, an ordinal and a hybrid strategy) for the alert class, and clustering (KMeans, Agglomerative, DBSCAN) to profile the stations. Every model is validated on a strict **temporal** train/test split, never on random rows, so the reported scores reflect real next-day forecasting. The selected models are served through a single **FastAPI** backend that exposes both a REST API and an integrated **Jinja2** web UI (interactive Lombardy map, per-station forecast, history and clustering pages), containerised with Docker and deployed on **Google Cloud Run**.
+AirCast is an end-to-end data science pipeline that forecasts **next-day PM10** air pollution for the **67 ARPA monitoring stations** of Lombardy, Italy, and turns every forecast into a 4-class public-health alert (`verde` / `giallo` / `arancio` / `rosso`). It ingests three heterogeneous public sources — ARPA Lombardia air-quality measurements, Open-Meteo hourly weather, and OpenStreetMap industrial-zone proximity — covering 2024-01-01 → 2026-05-07 (~54.6k station-days), and engineers temporal, lag/rolling, meteorological and spatial features from them. On top of this feature store it trains and **compares three families of models**: regression (ElasticNet, Random Forest, XGBoost) for the PM10 value, classification (logistic regression, tree ensembles, an ordinal and a hybrid strategy) for the alert class, and clustering (KMeans, Agglomerative, DBSCAN) to profile the stations. Every model is validated on a strict **temporal** train/test split, never on random rows, so the reported scores reflect real next-day forecasting. The selected models are served through a single **FastAPI** backend that exposes both a REST API and an integrated **Jinja2** web UI (interactive Lombardy map, per-station forecast, history and clustering pages), containerised with Docker and deployed on **Google Cloud Run**.
 
 **Live demo:** https://pm10-forecast-47880508774.europe-west1.run.app/ — interactive Lombardy map and Swagger docs at [`/docs`](https://pm10-forecast-47880508774.europe-west1.run.app/docs). The service scales to zero, so the first request may take ~30 s to warm up.
 
@@ -91,8 +91,8 @@ DataScience_ExamProject/
 The image bakes in the pre-trained model artifacts and the cleaned parquet, so it serves forecasts without needing MySQL:
 
 ```bash
-docker build -t airpulita-pm10 .
-docker run -p 8080:8080 -e GCS_BUCKET=exam-project-backfill airpulita-pm10
+docker build -t aircast-pm10 .
+docker run -p 8080:8080 -e GCS_BUCKET=exam-project-backfill aircast-pm10
 ```
 
 - Web UI (map / forecast / history / clusters): http://localhost:8080/

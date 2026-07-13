@@ -4,7 +4,7 @@ cd /d "%~dp0.."
 set PIPELINE_MODE=1
 
 echo ==========================================
-echo   AirPulita -- Full Pipeline
+echo   AirCast -- Full Pipeline
 echo ==========================================
 echo.
 
