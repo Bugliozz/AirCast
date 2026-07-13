@@ -48,12 +48,13 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Artifact paths
 # ---------------------------------------------------------------------------
-# Hybrid strategy: calibrated classifier (isotonic, temporal CV) used together
-# with the regressor. Replaces the plain best_model.joblib.
-# Rationale (2026-04-24): hybrid improves f1_macro (+1.5pp vs xgboost puro),
-# halves false-alarm rate (15.9% vs 23.1%), and reduces severe errors (1.85%
-# vs 2.05%). recall_rosso drops 2.8pp (0.608 vs 0.636). Neither strategy
-# reaches the §8 target of 0.65 — the hybrid is the best available candidate.
+# Hybrid strategy: XGBoost regressor -> XGBoost classifier, calibrated (isotonic,
+# temporal CV), used together with the regressor. Replaces the plain best_model.joblib.
+# This is the production strategy recorded in step_5_classification/artifacts/
+# final_model_selection.json: the only one of 7 candidates that satisfies both
+# operational constraints (severe_error_rate <= 2.5% and recall_rosso >= 0.65),
+# scoring f1_macro 0.636, severe_error_rate 2.3%, recall_rosso 0.68 and
+# over_alert_rate 17.2% on the temporal test set.
 FEATURE_STORE_PATH = PARQUET_PATH
 
 _INDEX_TO_LABEL = {v: k for k, v in LABEL_MAP.items()}
