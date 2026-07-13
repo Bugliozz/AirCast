@@ -31,7 +31,7 @@ DataScience_ExamProject/
 ├── tests/                   # pytest unit + integration suite (62 tests)
 ├── data/raw/                # Immutable raw JSON archive (measurements, weather, sensor registry)
 ├── summary.ipynb            # End-to-end notebook walkthrough (EDA → models → live demo)
-├── technical_report.pdf     # Full technical write-up (rendered; source: technical_report.md)
+├── technical_report.pdf     # Full technical write-up (PDF)
 ├── Dockerfile                # Single-container build served on Cloud Run
 └── requirements.txt
 ```

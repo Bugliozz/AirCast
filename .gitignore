@@ -80,3 +80,7 @@ desktop.ini
 
 # Internal planning checklist — kept local only (not an exam deliverable)
 implementation_steps.md
+
+# Markdown source of the technical report — kept local only; the tracked
+# deliverable is the rendered technical_report.pdf
+technical_report.md
