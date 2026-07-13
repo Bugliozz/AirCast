@@ -31,7 +31,7 @@ DataScience_ExamProject/
 ├── tests/                   # pytest unit + integration suite (62 tests)
 ├── data/raw/                # Immutable raw JSON archive (measurements, weather, sensor registry)
 ├── summary.ipynb            # End-to-end notebook walkthrough (EDA → models → live demo)
-├── technical_report.md      # Full technical write-up
+├── technical_report.pdf     # Full technical write-up (rendered; source: technical_report.md)
 ├── Dockerfile                # Single-container build served on Cloud Run
 └── requirements.txt
 ```
@@ -174,7 +174,7 @@ Full interactive documentation (request/response schemas) is available at `/docs
 | Classification — next-day alert class | Hybrid (XGBoost regressor → XGBoost classifier) | F1-macro / severe-error-rate / recall(`rosso`) | 0.636 / 2.3% / 0.68 |
 | Clustering — 67 stations | KMeans (k=2) | Silhouette | 0.467 |
 
-The classification model is selected under hard production constraints (`severe_error_rate ≤ 2.5%`, `recall_rosso ≥ 0.65`) evaluated across 7 candidate strategies — see `step_5_classification/artifacts/final_model_selection.json` and `technical_report.md` for the full comparison.
+The classification model is selected under hard production constraints (`severe_error_rate ≤ 2.5%`, `recall_rosso ≥ 0.65`) evaluated across 7 candidate strategies — see `step_5_classification/artifacts/final_model_selection.json` and [`technical_report.pdf`](technical_report.pdf) for the full comparison.
 
 ---
 
