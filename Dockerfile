@@ -6,7 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8080
 
-COPY requirements.txt .
+# Serving-only dependencies (api/requirements.txt) — keeps the image free of
+# training/ETL deps (pymysql, geopandas, pytest, ...) from the root requirements.txt
+COPY api/requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 COPY api/ ./api/

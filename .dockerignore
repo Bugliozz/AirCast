@@ -1,0 +1,40 @@
+# Keep local `docker build .` context aligned with what CI builds from a clean
+# checkout: exclude VCS, envs, caches, docs and the large untracked comparison
+# models that live only on this machine.
+.git
+.gitignore
+.gcloudignore
+.github
+.venv
+venv
+env
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ipynb_checkpoints
+*.ipynb
+*.md
+*.pdf
+Slide/
+tests/
+scripts/
+step_1_collection/
+step_2_ingestion/
+step_6_clustering/
+
+# Only the sensor registry is needed from data/
+data/**
+!data/raw/sensors_registry.json
+
+# Plots and big untracked comparison models (the Dockerfile only needs the
+# serving artifacts, which are tracked)
+step_3_eda/plots/
+step_4_regression/artifacts/plots/
+step_5_classification/artifacts/plots/
+step_4_regression/artifacts/*.joblib
+!step_4_regression/artifacts/best_model.joblib
+step_4_regression/artifacts/*.pkl
+step_5_classification/artifacts/*.joblib
+!step_5_classification/artifacts/xgboost_hybrid_calibrated.joblib
+step_5_classification/artifacts/*.pkl
