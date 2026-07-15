@@ -13,6 +13,10 @@ build/
 venv/
 env/
 
+# Test caches & local debug output
+.pytest_cache/
+scripts/nrt_test_output.txt
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb

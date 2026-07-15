@@ -12,15 +12,14 @@ __pycache__/
 *.pyd
 *.ipynb
 *.md
-Argomenti lezione/
+*.pdf
+Slide/
 tests/
 scripts/
 step_1_collection/
 step_2_ingestion/
 step_3_eda/plots/
 step_6_clustering/
-RISULTATI_MODELLI_ATTUALI.md
-technical_doc.md
 implementation_steps.md
 
 data/**
