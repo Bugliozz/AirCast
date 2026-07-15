@@ -12,7 +12,7 @@ AirCast is an end-to-end data science pipeline that forecasts **next-day PM10** 
 ## Project Structure
 
 ```
-DataScience_ExamProject/
+Data-Science-Exam-Project/
 ├── step_1_collection/       # ARPA + Open-Meteo + OSM data collection (CLI + Cloud Run jobs)
 │   ├── gcloud_backfill/     # Cloud Run Job: historical backfill + weekly "heal" of preliminary data
 │   └── gcloud_daily/        # Cloud Run Job: daily rolling-window refresh
@@ -29,7 +29,8 @@ DataScience_ExamProject/
 ├── shared/                  # Cross-step utilities (temporal split, preprocessing, log transform)
 ├── scripts/                 # Windows .bat pipeline runners + smoke tests
 ├── tests/                   # pytest unit + integration suite (62 tests)
-├── data/raw/                # Immutable raw JSON archive (measurements, weather, sensor registry)
+├── artifacts/               # Station cluster labels + interpretation (served by the API)
+├── data/raw/                # Raw JSON archive (only sensors_registry.json is tracked; full archive on GCS)
 ├── summary.ipynb            # End-to-end notebook walkthrough (EDA → models → live demo)
 ├── technical_report.pdf     # Full technical write-up (PDF)
 ├── Dockerfile                # Single-container build served on Cloud Run
@@ -101,6 +102,8 @@ docker run -p 8080:8080 -e GCS_BUCKET=exam-project-backfill aircast-pm10
 > The API and the web frontend are the **same** FastAPI app on the same port — there is no separate webapp container. `step_2_ingestion/compose.yaml` only spins up MySQL (+ Metabase) for local training and is not used in production.
 
 ### Run locally (full pipeline, from raw data to a running API)
+
+> **Raw-data note:** `data/raw/` ships only `sensors_registry.json` — the full raw JSON archive lives in the private GCS bucket (`exam-project-backfill`), so steps 2–3 below additionally require bucket access (`scripts/sync_gcs.py` + a GCP service account). Everything downstream of the tracked `step_3_eda/daily_dataset_clean.parquet` — model training and evaluation (steps 4–6), the test suite, `summary.ipynb` and the Docker image — is fully reproducible offline from a fresh clone.
 
 ```bash
 # 1. Local MySQL (training store only)
@@ -186,7 +189,7 @@ All models are evaluated on a **temporal hold-out split** — trained on 2024-01
 
 **Classification.** The 4-class alert comes from a hybrid strategy (XGBoost regressor → XGBoost classifier) selected **not by raw accuracy but under two operational constraints**: severe (2-class-off) error rate ≤ 2.5% and recall on the critical `rosso` class ≥ 0.65. Of the seven candidate strategies it was the *only* one satisfying both, scoring **F1-macro 0.636, severe-error-rate 2.3%, recall_rosso 0.68** and a 17.2% over-alert rate — a deliberate bias towards over-warning rather than missing a dangerous day.
 
-**Clustering.** KMeans with k=2 (silhouette 0.467) is the only interpretable solution, splitting the 67 stations into a large background group (56) and a small high-load group (11).
+**Clustering.** KMeans with k=2 (silhouette 0.467) is the only interpretable solution, splitting the 67 stations into a large high-load lowland group (56 stations — higher PM10, more critical days, closer to industrial zones) and a small cleaner high-altitude group (11 stations, mean elevation ≈ 456 m).
 
 **Limitations.** About 30% of PM10 variance stays unexplained, extreme `rosso` peaks remain the hardest cases (largest per-class RMSE), and roughly one red day in three is still under-alerted — adequate for an advisory tool, not for regulatory decisions.
 
